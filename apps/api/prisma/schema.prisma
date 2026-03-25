@@ -7,17 +7,21 @@ datasource db {
 }
 
 model User {
-  id            String        @id @default(cuid())
-  name          String
-  email         String        @unique
-  password      String
-  username      String        @unique
-  walletBalance Float         @default(0)
-  createdAt     DateTime      @default(now())
+  id            String    @id @default(cuid())
+  firstName     String
+  lastName      String
+  email         String    @unique
+  password      String?   // nullable — Google users have no password
+  username      String?   @unique // nullable until onboarding complete
+  googleId      String?   @unique
+  avatar        String?   // Google profile picture URL
+  walletBalance Float     @default(0)
+  isOnboarded   Boolean   @default(false) // false until username is set
+  createdAt     DateTime  @default(now())
 
-  betsCreated   Bet[]         @relation("creator")
+  betsCreated    Bet[]            @relation("creator")
   participations BetParticipant[]
-  transactions  Transaction[]
+  transactions   Transaction[]
 }
 
 model Bet {
