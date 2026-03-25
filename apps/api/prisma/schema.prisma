@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String        @id @default(cuid())
+  name          String
+  email         String        @unique
+  password      String
+  username      String        @unique
+  walletBalance Float         @default(0)
+  createdAt     DateTime      @default(now())
+
+  betsCreated   Bet[]         @relation("creator")
+  participations BetParticipant[]
+  transactions  Transaction[]
+}
+
+model Bet {
+  id           String         @id @default(cuid())
+  title        String
+  terms        String?
+  stakeAmount  Float
+  escrowAmount Float          @default(0)
+  status       BetStatus      @default(PENDING)
+  creatorId    String
+  creator      User           @relation("creator", fields: [creatorId], references: [id])
+  winnerId     String?
+  expiresAt    DateTime
+  createdAt    DateTime       @default(now())
+  settledAt    DateTime?
+
+  participants BetParticipant[]
+}
+
+model BetParticipant {
+  id          String    @id @default(cuid())
+  betId       String
+  userId      String
+  bet         Bet       @relation(fields: [betId], references: [id])
+  user        User      @relation(fields: [userId], references: [id])
+  accepted    Boolean?
+  outcomeVote String?
+  votedAt     DateTime?
+  joinedAt    DateTime?
+}
+
+model Transaction {
+  id        String          @id @default(cuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id])
+  type      TransactionType
+  amount    Float
+  reference String?         @unique
+  betId     String?
+  createdAt DateTime        @default(now())
+}
+
+enum BetStatus {
+  PENDING
+  ACTIVE
+  VOTING
+  CONSENSUS
+  SETTLED
+  DISPUTED
+  REFUNDED
+}
+
+enum TransactionType {
+  DEPOSIT
+  ESCROW_LOCK
+  ESCROW_RELEASE
+  REFUND
+  FEE
+}
