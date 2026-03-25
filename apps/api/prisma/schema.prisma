@@ -16,8 +16,11 @@ model User {
   googleId      String?   @unique
   avatar        String?   // Google profile picture URL
   walletBalance Float     @default(0)
-  isOnboarded   Boolean   @default(false) // false until username is set
-  createdAt     DateTime  @default(now())
+  isOnboarded              Boolean   @default(false) // false until username is set
+  emailVerified            Boolean   @default(false)
+  verificationToken        String?   @unique
+  verificationTokenExpiresAt DateTime?
+  createdAt                DateTime  @default(now())
 
   betsCreated    Bet[]            @relation("creator")
   participations BetParticipant[]

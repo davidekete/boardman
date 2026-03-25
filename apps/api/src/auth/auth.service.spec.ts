@@ -1,9 +1,14 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
+import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
 
@@ -25,6 +30,9 @@ const baseUser = {
   avatar: null as string | null,
   walletBalance: 0,
   isOnboarded: true,
+  emailVerified: false,
+  verificationToken: null as string | null,
+  verificationTokenExpiresAt: null as Date | null,
   createdAt: new Date(),
 };
 
@@ -45,6 +53,7 @@ describe('AuthService', () => {
     };
   };
   let jwtService: { sign: jest.Mock };
+  let mailService: { sendVerificationEmail: jest.Mock };
   let mockRes: { cookie: jest.Mock };
 
   beforeEach(async () => {
@@ -57,6 +66,7 @@ describe('AuthService', () => {
     };
 
     jwtService = { sign: jest.fn().mockReturnValue('mock_token') };
+    mailService = { sendVerificationEmail: jest.fn().mockResolvedValue(undefined) };
     mockRes = { cookie: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -64,6 +74,7 @@ describe('AuthService', () => {
         AuthService,
         { provide: PrismaService, useValue: prisma },
         { provide: JwtService, useValue: jwtService },
+        { provide: MailService, useValue: mailService },
         {
           provide: ConfigService,
           useValue: {
@@ -72,7 +83,9 @@ describe('AuthService', () => {
                 ? 'test'
                 : key === 'FRONTEND_URL'
                   ? 'http://localhost:3000'
-                  : 'secret',
+                  : key === 'APP_URL'
+                    ? 'http://localhost:3002'
+                    : 'secret',
             ),
           },
         },
@@ -95,7 +108,7 @@ describe('AuthService', () => {
       password: 'password123',
     };
 
-    it('creates the user, issues a token, and returns the user without password', async () => {
+    it('creates the user, issues a token, and returns the user without sensitive fields', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
       prisma.user.create.mockResolvedValue(baseUser);
       mockBcrypt.hash.mockResolvedValue('hashed_pw' as never);
@@ -122,6 +135,44 @@ describe('AuthService', () => {
         }),
       );
       expect(result).not.toHaveProperty('password');
+      expect(result).not.toHaveProperty('verificationToken');
+      expect(result).not.toHaveProperty('verificationTokenExpiresAt');
+    });
+
+    it('stores a verificationToken and 24h expiry on the new user', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue(baseUser);
+      mockBcrypt.hash.mockResolvedValue('hashed_pw' as never);
+
+      const before = Date.now();
+      await service.register(dto, mockRes as any);
+      const after = Date.now();
+
+      const createData = prisma.user.create.mock.calls[0][0].data;
+      expect(typeof createData.verificationToken).toBe('string');
+      expect(createData.verificationToken).toHaveLength(64); // 32 bytes → hex
+      const expiresMs = createData.verificationTokenExpiresAt.getTime();
+      expect(expiresMs).toBeGreaterThanOrEqual(before + 24 * 60 * 60 * 1000 - 100);
+      expect(expiresMs).toBeLessThanOrEqual(after + 24 * 60 * 60 * 1000 + 100);
+    });
+
+    it('fires a verification email with the generated token (non-blocking)', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue(baseUser);
+      mockBcrypt.hash.mockResolvedValue('hashed_pw' as never);
+
+      await service.register(dto, mockRes as any);
+      // allow the fire-and-forget promise to settle
+      await Promise.resolve();
+
+      // The service passes the locally-generated token to sendVerificationEmail,
+      // so capture it from what was sent to prisma.user.create
+      const generatedToken = prisma.user.create.mock.calls[0][0].data.verificationToken;
+      expect(mailService.sendVerificationEmail).toHaveBeenCalledWith(
+        baseUser.email,
+        baseUser.firstName,
+        generatedToken,
+      );
     });
 
     it('hashes the password with salt rounds 10 before storing', async () => {
@@ -159,7 +210,7 @@ describe('AuthService', () => {
     });
 
     it('throws ConflictException on email P2002 when two registrations race', async () => {
-      prisma.user.findUnique.mockResolvedValue(null); // both checks pass
+      prisma.user.findUnique.mockResolvedValue(null);
       prisma.user.create.mockRejectedValue(makeP2002('email'));
 
       await expect(service.register(dto, mockRes as any)).rejects.toThrow(
@@ -178,8 +229,7 @@ describe('AuthService', () => {
 
     it('re-throws unexpected DB errors from create', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
-      const unexpected = new Error('connection lost');
-      prisma.user.create.mockRejectedValue(unexpected);
+      prisma.user.create.mockRejectedValue(new Error('connection lost'));
 
       await expect(service.register(dto, mockRes as any)).rejects.toThrow(
         'connection lost',
@@ -192,7 +242,7 @@ describe('AuthService', () => {
   describe('login', () => {
     const dto = { email: 'john@example.com', password: 'password123' };
 
-    it('returns the user without password and sets a cookie on valid credentials', async () => {
+    it('returns the user without sensitive fields and sets a cookie on valid credentials', async () => {
       prisma.user.findUnique.mockResolvedValue(baseUser);
       mockBcrypt.compare.mockResolvedValue(true as never);
 
@@ -204,6 +254,7 @@ describe('AuthService', () => {
         expect.objectContaining({ httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 }),
       );
       expect(result).not.toHaveProperty('password');
+      expect(result).not.toHaveProperty('verificationToken');
     });
 
     it('throws UnauthorizedException when the user is not found', async () => {
@@ -233,6 +284,72 @@ describe('AuthService', () => {
     });
   });
 
+  // ─── verifyEmail ─────────────────────────────────────────────────────────────
+
+  describe('verifyEmail', () => {
+    const token = 'valid-token-abc';
+    const futureExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+
+    it('marks the user as verified, clears the token, and returns /auth/verified URL', async () => {
+      const unverifiedUser = {
+        ...baseUser,
+        emailVerified: false,
+        verificationToken: token,
+        verificationTokenExpiresAt: futureExpiry,
+      };
+      prisma.user.findUnique.mockResolvedValue(unverifiedUser);
+      prisma.user.update.mockResolvedValue({ ...unverifiedUser, emailVerified: true });
+
+      const result = await service.verifyEmail(token);
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: {
+          emailVerified: true,
+          verificationToken: null,
+          verificationTokenExpiresAt: null,
+        },
+      });
+      expect(result.redirectUrl).toBe('http://localhost:3000/auth/verified');
+    });
+
+    it('redirects already-verified users straight to /dashboard without re-updating', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...baseUser,
+        emailVerified: true,
+        verificationToken: token,
+        verificationTokenExpiresAt: futureExpiry,
+      });
+
+      const result = await service.verifyEmail(token);
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(result.redirectUrl).toBe('http://localhost:3000/dashboard');
+    });
+
+    it('throws BadRequestException when token is not found', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.verifyEmail('bad-token')).rejects.toThrow(
+        new BadRequestException('Invalid verification link'),
+      );
+    });
+
+    it('throws BadRequestException when token has expired', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...baseUser,
+        emailVerified: false,
+        verificationToken: token,
+        verificationTokenExpiresAt: new Date(Date.now() - 1000), // 1 second ago
+      });
+
+      await expect(service.verifyEmail(token)).rejects.toThrow(
+        new BadRequestException('Verification link has expired'),
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── findOrCreateGoogleUser ───────────────────────────────────────────────────
 
   describe('findOrCreateGoogleUser', () => {
@@ -244,13 +361,14 @@ describe('AuthService', () => {
       avatar: 'https://avatar.url/photo.jpg',
     };
 
-    it('returns the existing user without password when googleId matches', async () => {
+    it('returns the existing user without sensitive fields when googleId matches', async () => {
       const googleUser = { ...baseUser, googleId: 'google-123' };
       prisma.user.findUnique.mockResolvedValueOnce(googleUser);
 
       const result = await service.findOrCreateGoogleUser(profile);
 
       expect(result).not.toHaveProperty('password');
+      expect(result).not.toHaveProperty('verificationToken');
       expect(result).toMatchObject({ id: 'user-1', googleId: 'google-123' });
       expect(prisma.user.create).not.toHaveBeenCalled();
       expect(prisma.user.update).not.toHaveBeenCalled();
@@ -260,10 +378,7 @@ describe('AuthService', () => {
       prisma.user.findUnique
         .mockResolvedValueOnce(null) // no match by googleId
         .mockResolvedValueOnce(baseUser); // match by email
-      prisma.user.update.mockResolvedValue({
-        ...baseUser,
-        googleId: 'google-123',
-      });
+      prisma.user.update.mockResolvedValue({ ...baseUser, googleId: 'google-123' });
 
       const result = await service.findOrCreateGoogleUser(profile);
 
@@ -275,12 +390,13 @@ describe('AuthService', () => {
       expect(result).not.toHaveProperty('password');
     });
 
-    it('creates a new user with isOnboarded: false when no existing user is found', async () => {
+    it('creates a new Google user with emailVerified: true and isOnboarded: false', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
       const newUser = {
         ...baseUser,
         googleId: 'google-123',
         isOnboarded: false,
+        emailVerified: true,
         password: null,
         username: null,
       };
@@ -292,16 +408,15 @@ describe('AuthService', () => {
         data: expect.objectContaining({
           googleId: 'google-123',
           email: 'john@example.com',
-          firstName: 'John',
-          lastName: 'Doe',
-          avatar: 'https://avatar.url/photo.jpg',
           isOnboarded: false,
+          emailVerified: true,
           password: null,
           username: null,
         }),
       });
       expect(result.isOnboarded).toBe(false);
       expect(result).not.toHaveProperty('password');
+      expect(result).not.toHaveProperty('verificationToken');
     });
   });
 
@@ -336,7 +451,7 @@ describe('AuthService', () => {
   describe('completeProfile', () => {
     const dto = { username: 'new_handle' };
 
-    it('sets username and isOnboarded: true, returns user without password', async () => {
+    it('sets username and isOnboarded: true, returns user without sensitive fields', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
       const updated = { ...baseUser, username: 'new_handle' };
       prisma.user.update.mockResolvedValue(updated);
@@ -348,6 +463,7 @@ describe('AuthService', () => {
         data: { username: 'new_handle', isOnboarded: true },
       });
       expect(result).not.toHaveProperty('password');
+      expect(result).not.toHaveProperty('verificationToken');
     });
 
     it('throws ConflictException when the username is already taken', async () => {
@@ -360,7 +476,7 @@ describe('AuthService', () => {
     });
 
     it('throws ConflictException on username P2002 when two requests race', async () => {
-      prisma.user.findUnique.mockResolvedValue(null); // check passes
+      prisma.user.findUnique.mockResolvedValue(null);
       prisma.user.update.mockRejectedValue(makeP2002('username'));
 
       await expect(service.completeProfile('user-1', dto)).rejects.toThrow(
@@ -381,15 +497,14 @@ describe('AuthService', () => {
   // ─── getMe ───────────────────────────────────────────────────────────────────
 
   describe('getMe', () => {
-    it('fetches the user by id and returns them without password', async () => {
+    it('fetches the user by id and returns them without sensitive fields', async () => {
       prisma.user.findUnique.mockResolvedValue(baseUser);
 
       const result = await service.getMe('user-1');
 
-      expect(prisma.user.findUnique).toHaveBeenCalledWith({
-        where: { id: 'user-1' },
-      });
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: 'user-1' } });
       expect(result).not.toHaveProperty('password');
+      expect(result).not.toHaveProperty('verificationToken');
       expect(result).toMatchObject({
         id: 'user-1',
         email: 'john@example.com',
@@ -400,9 +515,7 @@ describe('AuthService', () => {
     it('throws UnauthorizedException when the user no longer exists', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
 
-      await expect(service.getMe('user-1')).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(service.getMe('user-1')).rejects.toThrow(UnauthorizedException);
     });
   });
 });

@@ -14,6 +14,7 @@ const safeUser = {
   avatar: null as string | null,
   walletBalance: 0,
   isOnboarded: true,
+  emailVerified: false,
   createdAt: new Date(),
 };
 

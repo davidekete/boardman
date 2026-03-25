@@ -1,28 +1,39 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma, User } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 import { Response } from 'express';
+import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompleteProfileDto } from './dto/complete-profile.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
-export type SafeUser = Omit<User, 'password'>;
+export type SafeUser = Omit<
+  User,
+  'password' | 'verificationToken' | 'verificationTokenExpiresAt'
+>;
 
 const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days — matches JWT expiry
+const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly mail: MailService,
   ) {}
 
   async register(dto: RegisterDto, res: Response): Promise<SafeUser> {
@@ -34,7 +45,10 @@ export class AuthService {
     if (emailTaken) throw new ConflictException('Email already in use');
     if (usernameTaken) throw new ConflictException('Username already taken');
 
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
+    const [hashedPassword, verificationToken] = await Promise.all([
+      bcrypt.hash(dto.password, 10),
+      Promise.resolve(crypto.randomBytes(32).toString('hex')),
+    ]);
 
     try {
       const user = await this.prisma.user.create({
@@ -45,8 +59,17 @@ export class AuthService {
           email: dto.email,
           password: hashedPassword,
           isOnboarded: true,
+          verificationToken,
+          verificationTokenExpiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
         },
       });
+
+      // Fire-and-forget — don't block the response on email delivery
+      this.mail
+        .sendVerificationEmail(user.email, user.firstName, verificationToken)
+        .catch((err) =>
+          this.logger.error('Verification email failed after register', err),
+        );
 
       this.issueToken(user, res);
       return this.sanitize(user);
@@ -106,6 +129,7 @@ export class AuthService {
       return this.sanitize(user);
     }
 
+    // New Google user — email is implicitly verified by Google
     user = await this.prisma.user.create({
       data: {
         firstName: profile.firstName,
@@ -114,6 +138,7 @@ export class AuthService {
         googleId: profile.googleId,
         avatar: profile.avatar,
         isOnboarded: false,
+        emailVerified: true,
         password: null,
         username: null,
       },
@@ -129,6 +154,43 @@ export class AuthService {
     return user.isOnboarded
       ? `${frontendUrl}/dashboard`
       : `${frontendUrl}/auth/complete-profile`;
+  }
+
+  async verifyEmail(
+    token: string,
+  ): Promise<{ redirectUrl: string }> {
+    const frontendUrl =
+      this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+
+    const user = await this.prisma.user.findUnique({
+      where: { verificationToken: token },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Invalid verification link');
+    }
+
+    if (user.emailVerified) {
+      return { redirectUrl: `${frontendUrl}/dashboard` };
+    }
+
+    if (
+      !user.verificationTokenExpiresAt ||
+      user.verificationTokenExpiresAt < new Date()
+    ) {
+      throw new BadRequestException('Verification link has expired');
+    }
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerified: true,
+        verificationToken: null,
+        verificationTokenExpiresAt: null,
+      },
+    });
+
+    return { redirectUrl: `${frontendUrl}/auth/verified` };
   }
 
   async completeProfile(
@@ -178,7 +240,7 @@ export class AuthService {
 
   private sanitize(user: User): SafeUser {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { password: _password, ...safe } = user;
+    const { password: _p, verificationToken: _vt, verificationTokenExpiresAt: _vtea, ...safe } = user;
     return safe;
   }
 }

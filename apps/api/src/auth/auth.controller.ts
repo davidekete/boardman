@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -61,6 +62,12 @@ export class AuthController {
       req.user,
       res,
     );
+    return res.redirect(redirectUrl);
+  }
+
+  @Get('verify-email')
+  async verifyEmail(@Query('token') token: string, @Res() res: Response) {
+    const { redirectUrl } = await this.authService.verifyEmail(token);
     return res.redirect(redirectUrl);
   }
 
