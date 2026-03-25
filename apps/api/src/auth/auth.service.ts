@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { User } from '@prisma/client';
+import { Prisma, User } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,7 +13,9 @@ import { CompleteProfileDto } from './dto/complete-profile.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
-type SafeUser = Omit<User, 'password'>;
+export type SafeUser = Omit<User, 'password'>;
+
+const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days — matches JWT expiry
 
 @Injectable()
 export class AuthService {
@@ -34,19 +36,31 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
-    const user = await this.prisma.user.create({
-      data: {
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        username: dto.username,
-        email: dto.email,
-        password: hashedPassword,
-        isOnboarded: true,
-      },
-    });
+    try {
+      const user = await this.prisma.user.create({
+        data: {
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          username: dto.username,
+          email: dto.email,
+          password: hashedPassword,
+          isOnboarded: true,
+        },
+      });
 
-    this.issueToken(user, res);
-    return this.sanitize(user);
+      this.issueToken(user, res);
+      return this.sanitize(user);
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        const field = (e.meta?.target as string[])?.[0];
+        if (field === 'email') throw new ConflictException('Email already in use');
+        throw new ConflictException('Username already taken');
+      }
+      throw e;
+    }
   }
 
   async login(dto: LoginDto, res: Response): Promise<SafeUser> {
@@ -73,12 +87,12 @@ export class AuthService {
     firstName: string;
     lastName: string;
     avatar: string;
-  }): Promise<User> {
+  }): Promise<SafeUser> {
     let user = await this.prisma.user.findUnique({
       where: { googleId: profile.googleId },
     });
 
-    if (user) return user;
+    if (user) return this.sanitize(user);
 
     user = await this.prisma.user.findUnique({
       where: { email: profile.email },
@@ -89,7 +103,7 @@ export class AuthService {
         where: { id: user.id },
         data: { googleId: profile.googleId },
       });
-      return user;
+      return this.sanitize(user);
     }
 
     user = await this.prisma.user.create({
@@ -105,7 +119,16 @@ export class AuthService {
       },
     });
 
-    return user;
+    return this.sanitize(user);
+  }
+
+  async handleGoogleCallback(user: SafeUser, res: Response): Promise<string> {
+    this.issueToken(user, res);
+    const frontendUrl =
+      this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+    return user.isOnboarded
+      ? `${frontendUrl}/dashboard`
+      : `${frontendUrl}/auth/complete-profile`;
   }
 
   async completeProfile(
@@ -118,12 +141,22 @@ export class AuthService {
 
     if (usernameTaken) throw new ConflictException('Username already taken');
 
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: { username: dto.username, isOnboarded: true },
-    });
+    try {
+      const user = await this.prisma.user.update({
+        where: { id: userId },
+        data: { username: dto.username, isOnboarded: true },
+      });
 
-    return this.sanitize(user);
+      return this.sanitize(user);
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new ConflictException('Username already taken');
+      }
+      throw e;
+    }
   }
 
   async getMe(userId: string): Promise<SafeUser> {
@@ -132,13 +165,14 @@ export class AuthService {
     return this.sanitize(user);
   }
 
-  issueToken(user: User, res: Response): void {
+  private issueToken(user: SafeUser, res: Response): void {
     const token = this.jwt.sign({ sub: user.id, username: user.username });
 
     res.cookie('boardman_token', token, {
       httpOnly: true,
       sameSite: 'lax',
       secure: this.config.get<string>('NODE_ENV') === 'production',
+      maxAge: COOKIE_MAX_AGE,
     });
   }
 

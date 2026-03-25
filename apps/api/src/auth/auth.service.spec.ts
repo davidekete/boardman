@@ -1,6 +1,7 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { Prisma } from '@prisma/client';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -26,6 +27,13 @@ const baseUser = {
   isOnboarded: true,
   createdAt: new Date(),
 };
+
+const makeP2002 = (field: string) =>
+  new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+    code: 'P2002',
+    clientVersion: '0.0.0',
+    meta: { target: [field] },
+  });
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -60,7 +68,11 @@ describe('AuthService', () => {
           provide: ConfigService,
           useValue: {
             get: jest.fn((key: string) =>
-              key === 'NODE_ENV' ? 'test' : 'secret',
+              key === 'NODE_ENV'
+                ? 'test'
+                : key === 'FRONTEND_URL'
+                  ? 'http://localhost:3000'
+                  : 'secret',
             ),
           },
         },
@@ -102,7 +114,12 @@ describe('AuthService', () => {
       expect(mockRes.cookie).toHaveBeenCalledWith(
         'boardman_token',
         'mock_token',
-        expect.any(Object),
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'lax',
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+          secure: false,
+        }),
       );
       expect(result).not.toHaveProperty('password');
     });
@@ -120,7 +137,6 @@ describe('AuthService', () => {
     });
 
     it('throws ConflictException when the email is already registered', async () => {
-      // Promise.all calls findUnique for email first, then username
       prisma.user.findUnique
         .mockResolvedValueOnce(baseUser) // email taken
         .mockResolvedValueOnce(null); // username free
@@ -141,6 +157,34 @@ describe('AuthService', () => {
       );
       expect(prisma.user.create).not.toHaveBeenCalled();
     });
+
+    it('throws ConflictException on email P2002 when two registrations race', async () => {
+      prisma.user.findUnique.mockResolvedValue(null); // both checks pass
+      prisma.user.create.mockRejectedValue(makeP2002('email'));
+
+      await expect(service.register(dto, mockRes as any)).rejects.toThrow(
+        new ConflictException('Email already in use'),
+      );
+    });
+
+    it('throws ConflictException on username P2002 when two registrations race', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockRejectedValue(makeP2002('username'));
+
+      await expect(service.register(dto, mockRes as any)).rejects.toThrow(
+        new ConflictException('Username already taken'),
+      );
+    });
+
+    it('re-throws unexpected DB errors from create', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      const unexpected = new Error('connection lost');
+      prisma.user.create.mockRejectedValue(unexpected);
+
+      await expect(service.register(dto, mockRes as any)).rejects.toThrow(
+        'connection lost',
+      );
+    });
   });
 
   // ─── login ───────────────────────────────────────────────────────────────────
@@ -157,7 +201,7 @@ describe('AuthService', () => {
       expect(mockRes.cookie).toHaveBeenCalledWith(
         'boardman_token',
         'mock_token',
-        expect.any(Object),
+        expect.objectContaining({ httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 }),
       );
       expect(result).not.toHaveProperty('password');
     });
@@ -200,13 +244,14 @@ describe('AuthService', () => {
       avatar: 'https://avatar.url/photo.jpg',
     };
 
-    it('returns the existing user immediately when googleId matches', async () => {
+    it('returns the existing user without password when googleId matches', async () => {
       const googleUser = { ...baseUser, googleId: 'google-123' };
       prisma.user.findUnique.mockResolvedValueOnce(googleUser);
 
       const result = await service.findOrCreateGoogleUser(profile);
 
-      expect(result).toEqual(googleUser);
+      expect(result).not.toHaveProperty('password');
+      expect(result).toMatchObject({ id: 'user-1', googleId: 'google-123' });
       expect(prisma.user.create).not.toHaveBeenCalled();
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
@@ -220,13 +265,14 @@ describe('AuthService', () => {
         googleId: 'google-123',
       });
 
-      await service.findOrCreateGoogleUser(profile);
+      const result = await service.findOrCreateGoogleUser(profile);
 
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: baseUser.id },
         data: { googleId: 'google-123' },
       });
       expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(result).not.toHaveProperty('password');
     });
 
     it('creates a new user with isOnboarded: false when no existing user is found', async () => {
@@ -255,6 +301,33 @@ describe('AuthService', () => {
         }),
       });
       expect(result.isOnboarded).toBe(false);
+      expect(result).not.toHaveProperty('password');
+    });
+  });
+
+  // ─── handleGoogleCallback ────────────────────────────────────────────────────
+
+  describe('handleGoogleCallback', () => {
+    it('issues a token and returns the dashboard URL when user is onboarded', async () => {
+      const user = { ...baseUser, isOnboarded: true };
+
+      const url = await service.handleGoogleCallback(user, mockRes as any);
+
+      expect(mockRes.cookie).toHaveBeenCalledWith(
+        'boardman_token',
+        'mock_token',
+        expect.objectContaining({ httpOnly: true }),
+      );
+      expect(url).toBe('http://localhost:3000/dashboard');
+    });
+
+    it('issues a token and returns the complete-profile URL when user is not onboarded', async () => {
+      const user = { ...baseUser, isOnboarded: false, username: null };
+
+      const url = await service.handleGoogleCallback(user, mockRes as any);
+
+      expect(mockRes.cookie).toHaveBeenCalled();
+      expect(url).toBe('http://localhost:3000/auth/complete-profile');
     });
   });
 
@@ -264,7 +337,7 @@ describe('AuthService', () => {
     const dto = { username: 'new_handle' };
 
     it('sets username and isOnboarded: true, returns user without password', async () => {
-      prisma.user.findUnique.mockResolvedValue(null); // username not taken
+      prisma.user.findUnique.mockResolvedValue(null);
       const updated = { ...baseUser, username: 'new_handle' };
       prisma.user.update.mockResolvedValue(updated);
 
@@ -284,6 +357,24 @@ describe('AuthService', () => {
         new ConflictException('Username already taken'),
       );
       expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException on username P2002 when two requests race', async () => {
+      prisma.user.findUnique.mockResolvedValue(null); // check passes
+      prisma.user.update.mockRejectedValue(makeP2002('username'));
+
+      await expect(service.completeProfile('user-1', dto)).rejects.toThrow(
+        new ConflictException('Username already taken'),
+      );
+    });
+
+    it('re-throws unexpected DB errors from update', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.update.mockRejectedValue(new Error('connection lost'));
+
+      await expect(service.completeProfile('user-1', dto)).rejects.toThrow(
+        'connection lost',
+      );
     });
   });
 
@@ -312,31 +403,6 @@ describe('AuthService', () => {
       await expect(service.getMe('user-1')).rejects.toThrow(
         UnauthorizedException,
       );
-    });
-  });
-
-  // ─── issueToken ──────────────────────────────────────────────────────────────
-
-  describe('issueToken', () => {
-    it('signs a JWT with { sub, username } and sets an httpOnly cookie', () => {
-      service.issueToken(baseUser, mockRes as any);
-
-      expect(jwtService.sign).toHaveBeenCalledWith({
-        sub: baseUser.id,
-        username: baseUser.username,
-      });
-      expect(mockRes.cookie).toHaveBeenCalledWith(
-        'boardman_token',
-        'mock_token',
-        expect.objectContaining({ httpOnly: true, sameSite: 'lax' }),
-      );
-    });
-
-    it('sets secure: false when NODE_ENV is not production', () => {
-      service.issueToken(baseUser, mockRes as any);
-
-      const cookieOptions = mockRes.cookie.mock.calls[0][2];
-      expect(cookieOptions.secure).toBe(false);
     });
   });
 });

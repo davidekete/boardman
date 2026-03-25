@@ -10,7 +10,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { User } from '@prisma/client';
 import { Request, Response } from 'express';
-import { AuthService } from './auth.service';
+import { AuthService, SafeUser } from './auth.service';
 import { CompleteProfileDto } from './dto/complete-profile.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -54,18 +54,14 @@ export class AuthController {
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleCallback(
-    @Req() req: Request & { user: User },
+    @Req() req: Request & { user: SafeUser },
     @Res() res: Response,
   ) {
-    const user = req.user;
-    this.authService.issueToken(user, res);
-
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-
-    if (!user.isOnboarded) {
-      return res.redirect(`${frontendUrl}/auth/complete-profile`);
-    }
-    return res.redirect(`${frontendUrl}/dashboard`);
+    const redirectUrl = await this.authService.handleGoogleCallback(
+      req.user,
+      res,
+    );
+    return res.redirect(redirectUrl);
   }
 
   @UseGuards(JwtAuthGuard)

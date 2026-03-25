@@ -26,10 +26,9 @@ describe('AuthController', () => {
     authService = {
       register: jest.fn(),
       login: jest.fn(),
-      logout: jest.fn(),
       getMe: jest.fn(),
       completeProfile: jest.fn(),
-      issueToken: jest.fn(),
+      handleGoogleCallback: jest.fn(),
       findOrCreateGoogleUser: jest.fn(),
     } as any;
 
@@ -106,7 +105,7 @@ describe('AuthController', () => {
 
   describe('GET /auth/me', () => {
     it('passes the user id from the request to authService.getMe', async () => {
-      const req = { user: { ...safeUser, password: null } } as any;
+      const req = { user: safeUser } as any;
       authService.getMe.mockResolvedValue(safeUser);
 
       const result = await controller.getMe(req);
@@ -128,7 +127,7 @@ describe('AuthController', () => {
 
   describe('POST /auth/complete-profile', () => {
     it('passes the user id and dto to authService.completeProfile', async () => {
-      const req = { user: { ...safeUser, password: null } } as any;
+      const req = { user: safeUser } as any;
       const dto = { username: 'new_handle' };
       const updated = { ...safeUser, username: 'new_handle' };
       authService.completeProfile.mockResolvedValue(updated);
@@ -151,40 +150,44 @@ describe('AuthController', () => {
   // ─── google callback ─────────────────────────────────────────────────────────
 
   describe('GET /auth/google/callback', () => {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-
-    it('issues a token then redirects to /dashboard when user is onboarded', async () => {
-      const req = { user: { ...safeUser, isOnboarded: true } } as any;
+    it('delegates to handleGoogleCallback and redirects to the returned URL', async () => {
+      const req = { user: safeUser } as any;
+      authService.handleGoogleCallback.mockResolvedValue(
+        'http://localhost:3000/dashboard',
+      );
 
       await controller.googleCallback(req, mockRes as any);
 
-      expect(authService.issueToken).toHaveBeenCalledWith(req.user, mockRes);
-      expect(mockRes.redirect).toHaveBeenCalledWith(`${frontendUrl}/dashboard`);
+      expect(authService.handleGoogleCallback).toHaveBeenCalledWith(
+        safeUser,
+        mockRes,
+      );
+      expect(mockRes.redirect).toHaveBeenCalledWith(
+        'http://localhost:3000/dashboard',
+      );
     });
 
-    it('issues a token then redirects to /auth/complete-profile when user is not onboarded', async () => {
-      const req = {
-        user: { ...safeUser, isOnboarded: false, username: null },
-      } as any;
+    it('redirects to complete-profile when handleGoogleCallback returns that URL', async () => {
+      const req = { user: { ...safeUser, isOnboarded: false } } as any;
+      authService.handleGoogleCallback.mockResolvedValue(
+        'http://localhost:3000/auth/complete-profile',
+      );
 
       await controller.googleCallback(req, mockRes as any);
 
-      expect(authService.issueToken).toHaveBeenCalledWith(req.user, mockRes);
       expect(mockRes.redirect).toHaveBeenCalledWith(
-        `${frontendUrl}/auth/complete-profile`,
+        'http://localhost:3000/auth/complete-profile',
       );
     });
   });
 
-  // ─── unprotected routes ───────────────────────────────────────────────────────
+  // ─── guard coverage ───────────────────────────────────────────────────────────
 
   describe('guard coverage', () => {
     it('register does not require JwtAuthGuard', () => {
       const guards =
-        Reflect.getMetadata(
-          '__guards__',
-          AuthController.prototype.register,
-        ) ?? [];
+        Reflect.getMetadata('__guards__', AuthController.prototype.register) ??
+        [];
       expect(guards).not.toContain(JwtAuthGuard);
     });
 
@@ -196,10 +199,7 @@ describe('AuthController', () => {
 
     it('logout does not require JwtAuthGuard', () => {
       const guards =
-        Reflect.getMetadata(
-          '__guards__',
-          AuthController.prototype.logout,
-        ) ?? [];
+        Reflect.getMetadata('__guards__', AuthController.prototype.logout) ?? [];
       expect(guards).not.toContain(JwtAuthGuard);
     });
   });
