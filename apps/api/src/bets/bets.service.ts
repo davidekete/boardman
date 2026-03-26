@@ -4,7 +4,6 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { BetStatus, TransactionType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -327,37 +326,6 @@ export class BetsService {
       await this.prisma.bet.update({
         where: { id: betId },
         data: { status: BetStatus.DISPUTED },
-      });
-    }
-  }
-
-  @Cron(CronExpression.EVERY_HOUR)
-  async expireStaleBets(): Promise<void> {
-    const staleBets = await this.prisma.bet.findMany({
-      where: {
-        status: { in: [BetStatus.PENDING, BetStatus.ACTIVE, BetStatus.VOTING] },
-        expiresAt: { lt: new Date() },
-      },
-      include: {
-        participants: { where: { accepted: true } },
-      },
-    });
-
-    for (const bet of staleBets) {
-      for (const participant of bet.participants) {
-        await this.walletService.creditWallet(
-          participant.userId,
-          bet.stakeAmount,
-          {
-            type: TransactionType.REFUND,
-            betId: bet.id,
-          },
-        );
-      }
-
-      await this.prisma.bet.update({
-        where: { id: bet.id },
-        data: { status: BetStatus.REFUNDED, escrowAmount: 0 },
       });
     }
   }

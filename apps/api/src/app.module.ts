@@ -5,6 +5,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { BetsModule } from './bets/bets.module';
+import { CronModule } from './cron/cron.module';
 import { MailModule } from './mail/mail.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -22,6 +23,7 @@ import { WalletModule } from './wallet/wallet.module';
     UsersModule,
     WalletModule,
     BetsModule,
+    CronModule,
   ],
   controllers: [AppController],
   providers: [AppService],
