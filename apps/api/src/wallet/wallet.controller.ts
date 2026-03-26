@@ -75,19 +75,26 @@ export class WalletController {
   async verifyFunding(@Query('txnref') txnref: string, @Res() res: Response) {
     const frontendUrl = this.config.get<string>('FRONTEND_URL');
 
-    const result = await this.interswitchService.verifyPayment(txnref);
+    const pending = await this.walletService.getPendingDeposit(txnref);
+
+    if (!pending) {
+      // Already settled or never existed — check for idempotency via settleDeposit
+      const settlement = await this.walletService.settleDeposit(txnref);
+      if (!settlement) {
+        return res.redirect(`${frontendUrl}/wallet?error=invalid_reference`);
+      }
+      return res.redirect(`${frontendUrl}/wallet?funded=true`);
+    }
+
+    const amountInKobo = pending.amount * 100;
+    const result = await this.interswitchService.verifyPayment(txnref, amountInKobo);
 
     if (!result.success) {
       await this.walletService.failDeposit(txnref);
       return res.redirect(`${frontendUrl}/wallet?error=payment_failed`);
     }
 
-    const settlement = await this.walletService.settleDeposit(txnref);
-
-    if (!settlement) {
-      return res.redirect(`${frontendUrl}/wallet?error=invalid_reference`);
-    }
-
+    await this.walletService.settleDeposit(txnref);
     return res.redirect(`${frontendUrl}/wallet?funded=true`);
   }
 }

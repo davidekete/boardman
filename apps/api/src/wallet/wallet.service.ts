@@ -122,6 +122,12 @@ export class WalletService {
     };
   }
 
+  async getPendingDeposit(reference: string) {
+    return this.prisma.transaction.findFirst({
+      where: { reference, status: TransactionStatus.PENDING },
+    });
+  }
+
   async failDeposit(reference: string) {
     await this.prisma.transaction.updateMany({
       where: { reference, status: TransactionStatus.PENDING },
