@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { BetStatus, TransactionType } from '@prisma/client';
@@ -28,6 +29,8 @@ const BET_INCLUDE = {
 
 @Injectable()
 export class BetsService {
+  private readonly logger = new Logger(BetsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly walletService: WalletService,
@@ -102,6 +105,10 @@ export class BetsService {
       where: { id: bet.id },
       data: { escrowAmount: dto.stakeAmount },
     });
+
+    this.logger.log(
+      `Bet ${bet.id} created by user ${creatorId} (stake: ${dto.stakeAmount})`,
+    );
 
     return this.prisma.bet.findUnique({
       where: { id: bet.id },
@@ -180,6 +187,7 @@ export class BetsService {
         where: { id: betId },
         data: { status: BetStatus.ACTIVE },
       });
+      this.logger.log(`Bet ${betId} is now ACTIVE — all participants accepted`);
     }
 
     return this.prisma.bet.findUnique({
@@ -222,6 +230,10 @@ export class BetsService {
         betId,
       });
     }
+
+    this.logger.log(
+      `Bet ${betId} declined by user ${userId} — refunded ${accepted.length} participant(s)`,
+    );
 
     return this.prisma.bet.findUnique({
       where: { id: betId },
@@ -322,11 +334,17 @@ export class BetsService {
           escrowAmount: 0,
         },
       });
+
+      this.logger.log(
+        `Bet ${betId} SETTLED — winner: ${winnerId}, payout: ${winnings}, fee: ${platformFee}`,
+      );
     } else {
       await this.prisma.bet.update({
         where: { id: betId },
         data: { status: BetStatus.DISPUTED },
       });
+
+      this.logger.warn(`Bet ${betId} DISPUTED — votes did not reach consensus`);
     }
   }
 }

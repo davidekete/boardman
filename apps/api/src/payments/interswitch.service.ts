@@ -1,6 +1,7 @@
 import { HttpService } from '@nestjs/axios';
-import { Injectable } from '@nestjs/common';
+import { BadGatewayException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { isAxiosError } from 'axios';
 import { createHash } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 
@@ -25,18 +26,28 @@ export class InterswitchService {
 
     const credentials = Buffer.from(`${clientId}:${secretKey}`).toString('base64');
 
-    const { data } = await firstValueFrom(
-      this.http.post(
-        `${apiUrl}/passport/oauth/token?grant_type=client_credentials`,
-        'grant_type=client_credentials',
-        {
-          headers: {
-            Authorization: `Basic ${credentials}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
+    let data: { access_token: string; expires_in: number };
+    try {
+      ({ data } = await firstValueFrom(
+        this.http.post(
+          `${apiUrl}/passport/oauth/token?grant_type=client_credentials`,
+          'grant_type=client_credentials',
+          {
+            headers: {
+              Authorization: `Basic ${credentials}`,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
           },
-        },
-      ),
-    );
+        ),
+      ));
+    } catch (err) {
+      if (isAxiosError(err)) {
+        throw new BadGatewayException(
+          `Payment gateway auth failed (${err.response?.status ?? 'no response'})`,
+        );
+      }
+      throw err;
+    }
 
     this.accessToken = data.access_token;
     // Subtract 60s buffer so we refresh before it actually expires
@@ -57,26 +68,36 @@ export class InterswitchService {
 
     const token = await this.getAccessToken();
 
-    const { data } = await firstValueFrom(
-      this.http.post(
-        `${apiUrl}/collections/api/v1/`,
-        {
-          merchantCode,
-          payableCode,
-          amount: String(params.amount),
-          redirectUrl,
-          customerId: params.userId,
-          currencyCode: '566',
-          customerEmail: params.email,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
+    let data: { paymentUrl: string; reference: string };
+    try {
+      ({ data } = await firstValueFrom(
+        this.http.post(
+          `${apiUrl}/collections/api/v1/`,
+          {
+            merchantCode,
+            payableCode,
+            amount: String(params.amount),
+            redirectUrl,
+            customerId: params.userId,
+            currencyCode: '566',
+            customerEmail: params.email,
           },
-        },
-      ),
-    );
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          },
+        ),
+      ));
+    } catch (err) {
+      if (isAxiosError(err)) {
+        throw new BadGatewayException(
+          `Payment initiation failed (${err.response?.status ?? 'no response'})`,
+        );
+      }
+      throw err;
+    }
 
     return { paymentUrl: data.paymentUrl, reference: data.reference };
   }

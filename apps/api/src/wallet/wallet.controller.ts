@@ -42,7 +42,9 @@ export class WalletController {
   @Post('fund/initiate')
   @UseGuards(JwtAuthGuard)
   @ApiCookieAuth('boardman_token')
-  @ApiOperation({ summary: 'Initiate a wallet top-up via Interswitch Pay Bill' })
+  @ApiOperation({
+    summary: 'Initiate a wallet top-up via Interswitch Pay Bill',
+  })
   async initiateFunding(
     @Body() dto: FundWalletDto,
     @Request() req: ExpressRequest & { user: User },
@@ -50,11 +52,12 @@ export class WalletController {
     const userId: string = req.user.id;
     const amountInKobo = dto.amount * 100;
 
-    const { paymentUrl, reference } = await this.interswitchService.initiatePayment({
-      amount: amountInKobo,
-      email: req.user.email,
-      userId,
-    });
+    const { paymentUrl, reference } =
+      await this.interswitchService.initiatePayment({
+        amount: amountInKobo,
+        email: req.user.email,
+        userId,
+      });
 
     await this.walletService.createPendingDeposit({
       userId,
@@ -67,7 +70,8 @@ export class WalletController {
 
   @Get('fund/verify')
   @ApiOperation({
-    summary: 'Interswitch redirect callback — verifies payment and credits wallet',
+    summary:
+      'Interswitch redirect callback — verifies payment and credits wallet',
   })
   @ApiQuery({ name: 'txnref', description: 'Merchant transaction reference' })
   async verifyFunding(@Query('txnref') txnref: string, @Res() res: Response) {
@@ -85,7 +89,10 @@ export class WalletController {
     }
 
     const amountInKobo = pending.amount * 100;
-    const result = await this.interswitchService.verifyPayment(txnref, amountInKobo);
+    const result = await this.interswitchService.verifyPayment(
+      txnref,
+      amountInKobo,
+    );
 
     if (!result.success) {
       await this.walletService.failDeposit(txnref);
