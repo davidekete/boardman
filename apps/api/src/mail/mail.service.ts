@@ -78,10 +78,6 @@ export class MailService {
                     </span>
                   </td>
                   <td align="right" valign="middle">
-                    <span style="font-family:'Bebas Neue',Impact,'Arial Narrow',sans-serif;
-                                 font-size:10px;letter-spacing:2px;color:#3D3D3D;">
-                      P2P BET ESCROW
-                    </span>
                   </td>
                 </tr>
               </table>
@@ -120,7 +116,7 @@ export class MailService {
                          font-size:15px;line-height:1.75;color:#9A9A9A;">
                 You&rsquo;re one step away from your first bet. Verify your
                 email address to activate your account and start placing
-                stakes against real opponents.
+                bets against real opponents.
               </p>
 
               <!-- CTA — Acid Yellow, sharp corners -->
@@ -157,34 +153,6 @@ export class MailService {
             </td>
           </tr>
 
-          <!-- ─── Stats bar ─────────────────────────────────────────── -->
-          <tr>
-            <td style="background-color:#131313;padding:20px 40px;">
-              <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td width="33%" style="text-align:left;">
-                    <p style="margin:0;font-family:'Bebas Neue',Impact,'Arial Narrow',sans-serif;
-                               font-size:10px;letter-spacing:2px;color:#3D3D3D;">ESCROW</p>
-                    <p style="margin:4px 0 0 0;font-family:'Bebas Neue',Impact,'Arial Narrow',sans-serif;
-                               font-size:18px;color:#A78BFA;">SECURED</p>
-                  </td>
-                  <td width="33%" style="text-align:center;">
-                    <p style="margin:0;font-family:'Bebas Neue',Impact,'Arial Narrow',sans-serif;
-                               font-size:10px;letter-spacing:2px;color:#3D3D3D;">DISPUTES</p>
-                    <p style="margin:4px 0 0 0;font-family:'Bebas Neue',Impact,'Arial Narrow',sans-serif;
-                               font-size:18px;color:#4ADE80;">RESOLVED</p>
-                  </td>
-                  <td width="33%" style="text-align:right;">
-                    <p style="margin:0;font-family:'Bebas Neue',Impact,'Arial Narrow',sans-serif;
-                               font-size:10px;letter-spacing:2px;color:#3D3D3D;">REFEREE</p>
-                    <p style="margin:4px 0 0 0;font-family:'Bebas Neue',Impact,'Arial Narrow',sans-serif;
-                               font-size:18px;color:#E8FF47;">BOARDMAN</p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
           <!-- ─── Footer ────────────────────────────────────────────── -->
           <tr>
             <td style="background-color:#0D0D0D;padding:24px 40px;">
@@ -193,10 +161,6 @@ export class MailService {
                          font-size:12px;line-height:1.6;color:#6B6B6B;">
                 If you didn&rsquo;t create a Boardman account, you can safely
                 ignore this email. No action is required.
-              </p>
-              <p style="margin:0;font-family:'DM Sans',Arial,sans-serif;
-                         font-size:11px;color:#3D3D3D;">
-                &copy; 2026 Boardman &nbsp;&middot;&nbsp; P2P Bet Escrow
               </p>
             </td>
           </tr>

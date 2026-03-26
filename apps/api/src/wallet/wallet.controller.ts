@@ -9,12 +9,20 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Response } from 'express';
+import {
+  ApiCookieAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
+import { User } from '@prisma/client';
+import { Request as ExpressRequest, Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { InterswitchService } from '../payments/interswitch.service';
 import { FundWalletDto } from './dto/fund-wallet.dto';
 import { WalletService } from './wallet.service';
 
+@ApiTags('Wallet')
 @Controller('wallet')
 export class WalletController {
   constructor(
@@ -25,13 +33,20 @@ export class WalletController {
 
   @Get()
   @UseGuards(JwtAuthGuard)
-  getWallet(@Request() req) {
+  @ApiCookieAuth('boardman_token')
+  @ApiOperation({ summary: 'Get wallet balance and last 50 transactions' })
+  getWallet(@Request() req: ExpressRequest & { user: User }) {
     return this.walletService.getWallet(req.user.id);
   }
 
   @Post('fund/initiate')
   @UseGuards(JwtAuthGuard)
-  async initiateFunding(@Body() dto: FundWalletDto, @Request() req) {
+  @ApiCookieAuth('boardman_token')
+  @ApiOperation({ summary: 'Initiate a wallet top-up via Interswitch Webpay' })
+  async initiateFunding(
+    @Body() dto: FundWalletDto,
+    @Request() req: ExpressRequest & { user: User },
+  ) {
     const userId: string = req.user.id;
     const merchantReference = `BMN-${Date.now()}-${userId.slice(0, 6)}`;
     const amountInKobo = dto.amount * 100;
@@ -53,6 +68,10 @@ export class WalletController {
   }
 
   @Get('fund/verify')
+  @ApiOperation({
+    summary: 'Interswitch redirect callback — verifies payment and credits wallet',
+  })
+  @ApiQuery({ name: 'txnref', description: 'Merchant transaction reference' })
   async verifyFunding(@Query('txnref') txnref: string, @Res() res: Response) {
     const frontendUrl = this.config.get<string>('FRONTEND_URL');
 

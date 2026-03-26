@@ -1,6 +1,8 @@
+import { ApiProperty } from '@nestjs/swagger';
 import { IsString, Matches, MinLength } from 'class-validator';
 
 export class CompleteProfileDto {
+  @ApiProperty({ example: 'johndoe' })
   @IsString()
   @MinLength(3)
   @Matches(/^[a-zA-Z0-9_]+$/, {
