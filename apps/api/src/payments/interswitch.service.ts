@@ -6,34 +6,79 @@ import { firstValueFrom } from 'rxjs';
 
 @Injectable()
 export class InterswitchService {
+  private accessToken: string | null = null;
+  private tokenExpiresAt = 0;
+
   constructor(
     private readonly http: HttpService,
     private readonly config: ConfigService,
   ) {}
 
-  initiatePayment(params: {
+  private async getAccessToken(): Promise<string> {
+    if (this.accessToken && Date.now() < this.tokenExpiresAt) {
+      return this.accessToken;
+    }
+
+    const apiUrl = this.config.get<string>('INTERSWITCH_API_URL');
+    const clientId = this.config.get<string>('INTERSWITCH_CLIENT_ID');
+    const secretKey = this.config.get<string>('INTERSWITCH_SECRET_KEY');
+
+    const credentials = Buffer.from(`${clientId}:${secretKey}`).toString('base64');
+
+    const { data } = await firstValueFrom(
+      this.http.post(
+        `${apiUrl}/passport/oauth/token?grant_type=client_credentials`,
+        'grant_type=client_credentials',
+        {
+          headers: {
+            Authorization: `Basic ${credentials}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        },
+      ),
+    );
+
+    this.accessToken = data.access_token;
+    // Subtract 60s buffer so we refresh before it actually expires
+    this.tokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000;
+
+    return this.accessToken;
+  }
+
+  async initiatePayment(params: {
     amount: number;
     email: string;
     userId: string;
-    merchantReference: string;
-  }): { paymentUrl: string } {
-    const webpayUrl = this.config.get<string>('INTERSWITCH_WEBPAY_URL');
+  }): Promise<{ paymentUrl: string; reference: string }> {
+    const apiUrl = this.config.get<string>('INTERSWITCH_API_URL');
     const merchantCode = this.config.get<string>('INTERSWITCH_MERCHANT_CODE');
-    const payItemID = this.config.get<string>('INTERSWITCH_PAY_ITEM_ID');
-    const siteRedirectURL = this.config.get<string>('INTERSWITCH_REDIRECT_URL');
+    const payableCode = this.config.get<string>('INTERSWITCH_PAY_ITEM_ID');
+    const redirectUrl = this.config.get<string>('INTERSWITCH_REDIRECT_URL');
 
-    const query = new URLSearchParams({
-      merchantCode,
-      payItemID,
-      amount: String(params.amount),
-      transactionReference: params.merchantReference,
-      currency: '566',
-      siteRedirectURL,
-      customerEmail: params.email,
-    }).toString();
+    const token = await this.getAccessToken();
 
-    const paymentUrl = `${webpayUrl}/collections/w/pay?${query}`;
-    return { paymentUrl };
+    const { data } = await firstValueFrom(
+      this.http.post(
+        `${apiUrl}/collections/api/v1/`,
+        {
+          merchantCode,
+          payableCode,
+          amount: String(params.amount),
+          redirectUrl,
+          customerId: params.userId,
+          currencyCode: '566',
+          customerEmail: params.email,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      ),
+    );
+
+    return { paymentUrl: data.paymentUrl, reference: data.reference };
   }
 
   async verifyPayment(
@@ -41,6 +86,7 @@ export class InterswitchService {
     amountInKobo: number,
   ): Promise<{ success: boolean; amount?: number }> {
     const apiUrl = this.config.get<string>('INTERSWITCH_API_URL');
+    const merchantCode = this.config.get<string>('INTERSWITCH_MERCHANT_CODE');
     const payItemID = this.config.get<string>('INTERSWITCH_PAY_ITEM_ID');
     const macKey = this.config.get<string>('INTERSWITCH_MAC_KEY');
 
@@ -51,7 +97,7 @@ export class InterswitchService {
 
     const url =
       `${apiUrl}/collections/api/v1/gettransaction.json` +
-      `?productid=${encodeURIComponent(payItemID)}` +
+      `?merchantcode=${encodeURIComponent(merchantCode)}` +
       `&transactionreference=${encodeURIComponent(transactionReference)}` +
       `&amount=${amountInKobo}`;
 

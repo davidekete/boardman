@@ -42,29 +42,27 @@ export class WalletController {
   @Post('fund/initiate')
   @UseGuards(JwtAuthGuard)
   @ApiCookieAuth('boardman_token')
-  @ApiOperation({ summary: 'Initiate a wallet top-up via Interswitch Webpay' })
+  @ApiOperation({ summary: 'Initiate a wallet top-up via Interswitch Pay Bill' })
   async initiateFunding(
     @Body() dto: FundWalletDto,
     @Request() req: ExpressRequest & { user: User },
   ) {
     const userId: string = req.user.id;
-    const merchantReference = `BMN-${Date.now()}-${userId.slice(0, 6)}`;
     const amountInKobo = dto.amount * 100;
 
-    const { paymentUrl } = this.interswitchService.initiatePayment({
+    const { paymentUrl, reference } = await this.interswitchService.initiatePayment({
       amount: amountInKobo,
       email: req.user.email,
       userId,
-      merchantReference,
     });
 
     await this.walletService.createPendingDeposit({
       userId,
       amount: dto.amount,
-      reference: merchantReference,
+      reference,
     });
 
-    return { paymentUrl, reference: merchantReference };
+    return { paymentUrl, reference };
   }
 
   @Get('fund/verify')
