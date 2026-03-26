@@ -57,14 +57,15 @@ model BetParticipant {
 }
 
 model Transaction {
-  id        String          @id @default(cuid())
+  id        String            @id @default(cuid())
   userId    String
-  user      User            @relation(fields: [userId], references: [id])
+  user      User              @relation(fields: [userId], references: [id])
   type      TransactionType
+  status    TransactionStatus @default(SUCCESS)
   amount    Float
-  reference String?         @unique
+  reference String?           @unique
   betId     String?
-  createdAt DateTime        @default(now())
+  createdAt DateTime          @default(now())
 }
 
 enum BetStatus {
@@ -83,4 +84,10 @@ enum TransactionType {
   ESCROW_RELEASE
   REFUND
   FEE
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
 }

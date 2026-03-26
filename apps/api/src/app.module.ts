@@ -4,7 +4,10 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { MailModule } from './mail/mail.module';
+import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { UsersModule } from './users/users.module';
+import { WalletModule } from './wallet/wallet.module';
 
 @Module({
   imports: [
@@ -12,6 +15,9 @@ import { PrismaModule } from './prisma/prisma.module';
     PrismaModule,
     MailModule,
     AuthModule,
+    PaymentsModule,
+    UsersModule,
+    WalletModule,
   ],
   controllers: [AppController],
   providers: [AppService],
