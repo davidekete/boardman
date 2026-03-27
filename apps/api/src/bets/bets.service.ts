@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { BetStatus, TransactionType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -34,6 +35,7 @@ export class BetsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly walletService: WalletService,
+    private readonly config: ConfigService,
   ) {}
 
   async createBet(dto: CreateBetDto, creatorId: string) {
@@ -306,7 +308,8 @@ export class BetsService {
 
     if (unanimous) {
       const winnerId = votes[0]!;
-      const platformFee = bet.escrowAmount * 0.03;
+      const feePercent = this.config.get<number>('PLATFORM_FEE_PERCENT', 0.03);
+      const platformFee = bet.escrowAmount * feePercent;
       const winnings = bet.escrowAmount - platformFee;
 
       // Transitional CONSENSUS state before payout
