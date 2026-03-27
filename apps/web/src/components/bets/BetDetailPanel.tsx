@@ -1,7 +1,8 @@
 'use client'
 
+import { useSearchParams } from 'next/navigation'
 import { BetStatus, Bet, BetParticipant } from '@boardman/shared'
-import { useBet, useMe, useAcceptBet, useDeclineBet, useOpenVoting, type User } from '@/lib/queries'
+import { useBet, useMe, useAcceptBet, useAcceptByToken, useDeclineBet, useOpenVoting, useVoteCancelBet, type User } from '@/lib/queries'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { ParticipantAvatar } from '@/components/ui/ParticipantAvatar'
 import { Button } from '@/components/ui/Button'
@@ -16,8 +17,12 @@ export function BetDetailPanel({ id }: BetDetailPanelProps) {
   const { data: bet, isLoading } = useBet(id)
   const { data: me } = useMe()
   const accept = useAcceptBet()
+  const acceptByToken = useAcceptByToken()
   const decline = useDeclineBet()
   const openVoting = useOpenVoting()
+  const voteCancel = useVoteCancelBet()
+  const searchParams = useSearchParams()
+  const acceptToken = searchParams.get('accept_token')
 
   if (isLoading || !bet) {
     return (
@@ -241,8 +246,11 @@ export function BetDetailPanel({ id }: BetDetailPanelProps) {
         hasVoted={hasVoted}
         winner={winner}
         accept={accept}
+        acceptByToken={acceptByToken}
+        acceptToken={acceptToken}
         decline={decline}
         openVoting={openVoting}
+        voteCancel={voteCancel}
       />
     </div>
   )
@@ -255,8 +263,11 @@ function ActionArea({
   hasVoted,
   winner,
   accept,
+  acceptByToken,
+  acceptToken,
   decline,
   openVoting,
+  voteCancel,
 }: {
   bet: Bet
   myParticipant: BetParticipant | undefined
@@ -264,24 +275,35 @@ function ActionArea({
   hasVoted: boolean
   winner: BetParticipant | null
   accept: ReturnType<typeof useAcceptBet>
+  acceptByToken: ReturnType<typeof useAcceptByToken>
+  acceptToken: string | null
   decline: ReturnType<typeof useDeclineBet>
   openVoting: ReturnType<typeof useOpenVoting>
+  voteCancel: ReturnType<typeof useVoteCancelBet>
 }) {
   if (!bet || !me) return null
 
-  const busy = accept.isPending || decline.isPending
+  const busy = accept.isPending || acceptByToken.isPending || decline.isPending
 
   // PENDING + invited
   if (bet.status === BetStatus.PENDING && myParticipant?.accepted === null) {
+    const handleAccept = () => {
+      if (acceptToken) {
+        acceptByToken.mutate({ betId: bet.id, token: acceptToken })
+      } else {
+        accept.mutate(bet.id)
+      }
+    }
+
     return (
       <div className="flex flex-col gap-3">
         <Button
           variant="primary"
           size="lg"
           fullWidth
-          loading={accept.isPending}
+          loading={accept.isPending || acceptByToken.isPending}
           disabled={busy}
-          onClick={() => accept.mutate(bet.id)}
+          onClick={handleAccept}
         >
           Accept Bet
         </Button>
@@ -299,28 +321,47 @@ function ActionArea({
     )
   }
 
-  // ACTIVE + creator
-  if (bet.status === BetStatus.ACTIVE && bet.creatorId === me.id) {
+  // ACTIVE
+  if (bet.status === BetStatus.ACTIVE && myParticipant?.accepted === true) {
+    const myCancel = myParticipant.cancelVote
+    const cancelCount = bet.participants.filter((p) => p.cancelVote).length
+    const totalActive = bet.participants.filter((p) => p.accepted === true).length
+
     return (
-      <div className="flex flex-col gap-2">
-        <Button
-          variant="surface"
-          size="md"
-          loading={openVoting.isPending}
-          onClick={() => openVoting.mutate(bet.id)}
-          style={{ color: 'var(--warning)' } as React.CSSProperties}
-        >
-          Mark Event as Done
-        </Button>
-        <p
-          style={{
-            fontFamily: 'var(--font-dm)',
-            fontSize: '12px',
-            color: 'var(--muted)',
-          }}
-        >
-          Open voting once the event has concluded
-        </p>
+      <div className="flex flex-col gap-3">
+        {bet.creatorId === me.id && (
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="surface"
+              size="md"
+              loading={openVoting.isPending}
+              onClick={() => openVoting.mutate(bet.id)}
+              style={{ color: 'var(--warning)' } as React.CSSProperties}
+            >
+              Mark Event as Done
+            </Button>
+            <p style={{ fontFamily: 'var(--font-dm)', fontSize: '12px', color: 'var(--muted)' }}>
+              Open voting once the event has concluded
+            </p>
+          </div>
+        )}
+        <div className="flex flex-col gap-2">
+          <Button
+            variant="surface"
+            size="md"
+            loading={voteCancel.isPending}
+            disabled={myCancel}
+            onClick={() => voteCancel.mutate(bet.id)}
+            style={{ color: 'var(--danger)' } as React.CSSProperties}
+          >
+            {myCancel ? 'Exit requested' : 'Request Early Exit'}
+          </Button>
+          {cancelCount > 0 && (
+            <p style={{ fontFamily: 'var(--font-dm)', fontSize: '12px', color: 'var(--muted)' }}>
+              {cancelCount}/{totalActive} agreed to exit — stakes refunded when all agree
+            </p>
+          )}
+        </div>
       </div>
     )
   }

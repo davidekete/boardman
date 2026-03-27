@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { BetDetailPanel } from '@/components/bets/BetDetailPanel'
 
 export async function generateMetadata({
@@ -15,5 +16,9 @@ export default async function BetPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  return <BetDetailPanel id={id} />
+  return (
+    <Suspense>
+      <BetDetailPanel id={id} />
+    </Suspense>
+  )
 }

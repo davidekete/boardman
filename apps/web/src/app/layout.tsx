@@ -22,6 +22,17 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'Boardman',
   description: 'Your bets. Locked in.',
+  openGraph: {
+    title: 'Boardman',
+    description: 'Your bets. Locked in.',
+    siteName: 'Boardman',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Boardman',
+    description: 'Your bets. Locked in.',
+  },
 }
 
 export default function RootLayout({

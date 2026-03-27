@@ -77,7 +77,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Right column */}
-      <div className="flex flex-col gap-6" style={{ width: '100%', maxWidth: 320 }}>
+      <div className="flex flex-col gap-6 w-full md:w-80 md:shrink-0">
         {/* Balance widget */}
         <div
           style={{

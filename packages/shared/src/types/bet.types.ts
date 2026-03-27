@@ -14,6 +14,7 @@ export enum TransactionType {
   ESCROW_RELEASE = "ESCROW_RELEASE",
   REFUND = "REFUND",
   FEE = "FEE",
+  WITHDRAWAL = "WITHDRAWAL",
 }
 
 export interface BetParticipant {
@@ -23,6 +24,7 @@ export interface BetParticipant {
   accepted: boolean | null;
   outcomeVote: string | null;
   votedAt: string | null;
+  cancelVote: boolean;
 }
 
 export interface Bet {

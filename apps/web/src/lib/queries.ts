@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { authApi, walletApi, betsApi, usersApi } from './api'
+import type { WithdrawalAccount } from './api'
 import type { Bet, WalletSummary } from '@boardman/shared'
 
 export interface User {
@@ -110,6 +111,82 @@ export const useInitiateDeposit = () => {
   return useMutation({
     mutationFn: (amount: number) => walletApi.initiateDeposit(amount),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['wallet'] })
+    },
+  })
+}
+
+export const useGetVirtualAccount = () =>
+  useMutation({
+    mutationFn: () => walletApi.getVirtualAccount(),
+  })
+
+export const useTestFund = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (amount: number) => walletApi.testFund(amount),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['wallet'] })
+    },
+  })
+}
+
+export const useWithdrawalAccount = () =>
+  useQuery<WithdrawalAccount | null>({
+    queryKey: ['withdrawalAccount'],
+    queryFn: () => walletApi.getWithdrawalAccount(),
+  })
+
+export const useAccountNameInquiry = () =>
+  useMutation({
+    mutationFn: (data: { accountNumber: string; bankCode: string }) =>
+      walletApi.inquireAccountName(data),
+  })
+
+export const useSaveWithdrawalAccount = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (data: {
+      accountNumber: string
+      bankCode: string
+      bankName: string
+      accountName: string
+    }) => walletApi.saveWithdrawalAccount(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['withdrawalAccount'] })
+    },
+  })
+}
+
+export const useWithdraw = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (amount: number) => walletApi.withdraw(amount),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['wallet'] })
+    },
+  })
+}
+
+export const useVoteCancelBet = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => betsApi.voteCancel(id),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['bet', id] })
+      queryClient.invalidateQueries({ queryKey: ['bets'] })
+    },
+  })
+}
+
+export const useAcceptByToken = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ betId, token }: { betId: string; token: string }) =>
+      betsApi.acceptByToken(betId, token),
+    onSuccess: (_data, { betId }) => {
+      queryClient.invalidateQueries({ queryKey: ['bet', betId] })
+      queryClient.invalidateQueries({ queryKey: ['bets'] })
       queryClient.invalidateQueries({ queryKey: ['wallet'] })
     },
   })

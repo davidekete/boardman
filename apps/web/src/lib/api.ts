@@ -40,10 +40,40 @@ export const authApi = {
   },
 }
 
+export interface WithdrawalAccount {
+  id: string
+  userId: string
+  accountNumber: string
+  accountName: string
+  bankCode: string
+  bankName: string
+  createdAt: string
+  updatedAt: string
+}
+
 export const walletApi = {
   getWallet: () => get('/wallet'),
   initiateDeposit: (amount: number) =>
     post<{ paymentUrl: string }>('/wallet/fund/initiate', { amount }),
+  getVirtualAccount: () =>
+    post<{ accountNumber: string; bankName: string; bankCode: string }>(
+      '/wallet/fund/virtual-account',
+      {},
+    ),
+  testFund: (amount: number) =>
+    post<{ success: boolean; amount: number }>('/wallet/fund/test', { amount }),
+  getWithdrawalAccount: () =>
+    get<WithdrawalAccount | null>('/wallet/account'),
+  inquireAccountName: (data: { accountNumber: string; bankCode: string }) =>
+    post<{ accountName: string }>('/wallet/account/inquiry', data),
+  saveWithdrawalAccount: (data: {
+    accountNumber: string
+    bankCode: string
+    bankName: string
+    accountName: string
+  }) => post<WithdrawalAccount>('/wallet/account', data),
+  withdraw: (amount: number) =>
+    post<{ message: string; reference: string }>('/wallet/withdraw', { amount }),
 }
 
 export const betsApi = {
@@ -61,6 +91,9 @@ export const betsApi = {
   openVoting: (id: string) => post(`/bets/${id}/open-voting`, {}),
   vote: (id: string, winnerId: string) =>
     post(`/bets/${id}/vote`, { winnerId }),
+  acceptByToken: (id: string, token: string) =>
+    post(`/bets/${id}/accept-by-token`, { token }),
+  voteCancel: (id: string) => post(`/bets/${id}/vote-cancel`, {}),
 }
 
 export const usersApi = {

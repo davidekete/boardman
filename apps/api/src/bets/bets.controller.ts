@@ -145,4 +145,31 @@ export class BetsController {
   ) {
     return this.betsService.vote(id, req.user.id, dto);
   }
+
+  @Post(':id/vote-cancel')
+  @ApiOperation({
+    summary: 'Vote to cancel an active bet early (refunds if all agree)',
+  })
+  @ApiResponse({ status: 201, type: BetResponse, description: 'Vote recorded' })
+  @ApiResponse({ status: 400, description: 'Bet not active or already voted' })
+  @ApiResponse({ status: 403, description: 'Not an accepted participant' })
+  voteCancel(
+    @Param('id') id: string,
+    @Request() req: ExpressRequest & { user: User },
+  ) {
+    return this.betsService.voteCancel(id, req.user.id);
+  }
+
+  @Post(':id/accept-by-token')
+  @ApiOperation({ summary: 'Accept a bet invite via one-time email token' })
+  @ApiResponse({
+    status: 201,
+    type: BetResponse,
+    description: 'Invite accepted',
+  })
+  @ApiResponse({ status: 400, description: 'Already responded' })
+  @ApiResponse({ status: 404, description: 'Invalid or expired token' })
+  acceptByToken(@Param('id') id: string, @Body('token') token: string) {
+    return this.betsService.acceptByToken(id, token);
+  }
 }

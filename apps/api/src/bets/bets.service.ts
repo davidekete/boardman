@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import {
   BadRequestException,
   ForbiddenException,
@@ -7,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BetStatus, TransactionType } from '@prisma/client';
+import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { CreateBetDto } from './dto/create-bet.dto';
@@ -36,6 +38,7 @@ export class BetsService {
     private readonly prisma: PrismaService,
     private readonly walletService: WalletService,
     private readonly config: ConfigService,
+    private readonly mailService: MailService,
   ) {}
 
   async createBet(dto: CreateBetDto, creatorId: string) {
@@ -55,11 +58,22 @@ export class BetsService {
     }
 
     // Resolve each invited username to a user
-    const invitedUsers: { id: string }[] = [];
+    const invitedUsers: {
+      id: string;
+      email: string;
+      firstName: string;
+      lastName: string;
+    }[] = [];
     for (const username of dto.participantUsernames) {
       const user = await this.prisma.user.findUnique({
         where: { username },
-        select: { id: true, username: true },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+        },
       });
       if (!user) throw new BadRequestException(`User @${username} not found`);
       if (user.id === creatorId)
@@ -90,11 +104,36 @@ export class BetsService {
       },
     });
 
-    // Invited participants start as pending
+    // Invited participants start as pending; generate one-time accept token per invite
     for (const invited of invitedUsers) {
+      const acceptToken = randomBytes(32).toString('hex');
       await this.prisma.betParticipant.create({
-        data: { betId: bet.id, userId: invited.id, accepted: null },
+        data: {
+          betId: bet.id,
+          userId: invited.id,
+          accepted: null,
+          acceptToken,
+        },
       });
+
+      this.mailService
+        .sendBetInviteEmail({
+          recipientEmail: invited.email,
+          recipientFirstName: invited.firstName,
+          creatorName: creator.firstName,
+          betId: bet.id,
+          betTitle: bet.title,
+          betTerms: dto.terms,
+          stakeAmount: dto.stakeAmount,
+          expiresAt,
+          acceptToken,
+        })
+        .catch((err: Error) =>
+          this.logger.error(
+            `Failed to send invite email to ${invited.email}`,
+            err.stack,
+          ),
+        );
     }
 
     // Lock creator's stake in escrow
@@ -292,6 +331,73 @@ export class BetsService {
       where: { id: betId },
       include: BET_INCLUDE,
     });
+  }
+
+  async voteCancel(betId: string, userId: string) {
+    const participant = await this.prisma.betParticipant.findFirst({
+      where: { betId, userId, accepted: true },
+      include: { bet: true },
+    });
+
+    if (!participant) throw new ForbiddenException();
+    if (participant.bet.status !== BetStatus.ACTIVE) {
+      throw new BadRequestException('Bet must be active to request early exit');
+    }
+    if (participant.cancelVote) {
+      throw new BadRequestException('Already voted to cancel');
+    }
+
+    await this.prisma.betParticipant.update({
+      where: { id: participant.id },
+      data: { cancelVote: true },
+    });
+
+    // Check if all accepted participants have voted to cancel
+    const accepted = await this.prisma.betParticipant.findMany({
+      where: { betId, accepted: true },
+    });
+
+    if (accepted.every((p) => p.cancelVote || p.id === participant.id)) {
+      // All agree — refund everyone and close the bet
+      for (const ap of accepted) {
+        await this.walletService.creditWallet(
+          ap.userId,
+          participant.bet.stakeAmount,
+          { type: TransactionType.REFUND, betId },
+        );
+      }
+
+      await this.prisma.bet.update({
+        where: { id: betId },
+        data: { status: BetStatus.REFUNDED, escrowAmount: 0 },
+      });
+
+      this.logger.log(`Bet ${betId} cancelled early by mutual agreement`);
+    }
+
+    return this.prisma.bet.findUnique({
+      where: { id: betId },
+      include: BET_INCLUDE,
+    });
+  }
+
+  async acceptByToken(betId: string, token: string) {
+    const participant = await this.prisma.betParticipant.findFirst({
+      where: { betId, acceptToken: token },
+    });
+
+    if (!participant) throw new NotFoundException('Invalid or expired token');
+    if (participant.accepted !== null) {
+      throw new BadRequestException('Already responded to this invite');
+    }
+
+    // Invalidate the token before accepting
+    await this.prisma.betParticipant.update({
+      where: { id: participant.id },
+      data: { acceptToken: null },
+    });
+
+    return this.acceptBet(betId, participant.userId);
   }
 
   private async checkConsensus(betId: string): Promise<void> {
