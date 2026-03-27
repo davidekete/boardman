@@ -230,10 +230,11 @@ export class AuthService {
   private issueToken(user: SafeUser, res: Response): void {
     const token = this.jwt.sign({ sub: user.id, username: user.username });
 
+    const isProd = this.config.get<string>('NODE_ENV') === 'production';
     res.cookie('boardman_token', token, {
       httpOnly: true,
-      sameSite: 'lax',
-      secure: this.config.get<string>('NODE_ENV') === 'production',
+      sameSite: isProd ? 'none' : 'lax',
+      secure: isProd,
       maxAge: COOKIE_MAX_AGE,
     });
   }
