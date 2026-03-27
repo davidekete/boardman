@@ -81,7 +81,24 @@ export class BetsService {
       invitedUsers.push(user);
     }
 
-    const expiresAt = new Date(Date.now() + dto.expiresInHours * 3_600_000);
+    let durationHours: number | null = null;
+    if (
+      typeof dto.expiresInHours === 'number' &&
+      Number.isInteger(dto.expiresInHours)
+    ) {
+      durationHours = dto.expiresInHours;
+    } else if (
+      typeof dto.expiresInDays === 'number' &&
+      Number.isInteger(dto.expiresInDays)
+    ) {
+      durationHours = dto.expiresInDays * 24;
+    }
+    if (!durationHours || durationHours < 1) {
+      throw new BadRequestException(
+        'Provide expiresInHours or expiresInDays as a positive integer',
+      );
+    }
+    const expiresAt = new Date(Date.now() + durationHours * 3_600_000);
 
     const bet = await this.prisma.bet.create({
       data: {

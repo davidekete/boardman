@@ -145,7 +145,7 @@ components:
     # ── Bets ──────────────────────────────────────────────────────────────────
     CreateBetDto:
       type: object
-      required: [title, stakeAmount, participantUsernames, expiresInHours]
+      required: [title, stakeAmount, participantUsernames]
       properties:
         title:
           type: string
@@ -168,10 +168,15 @@ components:
           maxItems: 9
           example: ['alice', 'bob']
         expiresInHours:
-          type: number
-          enum: [24, 72, 168]
-          description: Bet duration in hours (24, 72, or 168)
+          type: integer
+          minimum: 1
+          description: Bet duration in hours (positive integer). Optional if expiresInDays is provided.
           example: 24
+        expiresInDays:
+          type: integer
+          minimum: 1
+          description: Bet duration in days (positive integer). Automatically converted to hours if provided.
+          example: 3
 
     VoteDto:
       type: object

@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsIn,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -36,8 +37,22 @@ export class CreateBetDto {
   @IsString({ each: true })
   participantUsernames: string[];
 
-  @ApiProperty({ example: 24, description: 'Bet duration in hours (24, 72, or 168)' })
-  @IsNumber()
-  @IsIn([24, 72, 168])
-  expiresInHours: number;
+  @ApiPropertyOptional({
+    example: 24,
+    description: 'Bet duration in hours (positive integer)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  expiresInHours?: number;
+
+  @ApiPropertyOptional({
+    example: 3,
+    description:
+      'Bet duration in days (positive integer). Automatically converted to hours.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  expiresInDays?: number;
 }

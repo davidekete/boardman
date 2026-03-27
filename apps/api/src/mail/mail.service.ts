@@ -311,7 +311,8 @@ export class MailService {
     token: string,
   ): Promise<void> {
     const appUrl =
-      this.config.get<string>('APP_URL') || 'http://localhost:3002';
+      this.config.get<string>('APP_URL') ||
+      'https://boardman-tqd1.onrender.com';
     const verifyUrl = `${appUrl}/auth/verify-email?token=${token}`;
 
     try {
