@@ -1,6 +1,6 @@
 # Boardman
 
-> Peer-to-peer betting escrow -- stake it, match it, settle it.
+> Peer-to-peer betting escrow — stake it, lock it, settle it.
 
 **Team Code:** `c7087b`
 
@@ -8,7 +8,7 @@
 
 ## What is Boardman?
 
-Boardman is a peer-to-peer betting escrow platform that lets two parties create, fund, and settle bets without trusting each other or a centralised bookmaker. Stakes are locked in escrow at bet creation and released to the winner on outcome confirmation.
+Boardman is a peer-to-peer betting escrow platform. Two or more parties create a bet, each side locks their stake into escrow, and the winner collects when the outcome is confirmed. No bookmaker, no trust required.
 
 ---
 
@@ -23,18 +23,21 @@ Boardman is a peer-to-peer betting escrow platform that lets two parties create,
 | User A | `tester.alpha@maildrop.cc` | `Password123` |
 | User B | `tester.beta@maildrop.cc` | `Password123` |
 
-> Use these accounts to simulate a full bet lifecycle: create a bet on one account, join it from the second, and settle the outcome.
+> Use both accounts to simulate a full bet lifecycle: create a bet on User A, accept it on User B, then settle the outcome.
 
 ---
 
 ## Core Features
 
-- **Bet creation** -- define terms, stake amount, and expiry window
-- **Escrow wallet** -- funds locked on both sides before a bet goes live
-- **Outcome settlement** -- winner claims escrowed funds on confirmation
-- **Time-based expiry** -- unmatched bets expire automatically when the window closes
-- **Automatic refunds** -- escrowed funds returned to both parties if a bet expires or is cancelled
-- **Interswitch payment integration** -- fund your wallet and withdraw winnings via Interswitch
+- **Invite-only bets** — creator specifies participants by username; no open pool
+- **Email invites** — participants receive an invite email and can accept directly from it
+- **Escrow wallet** — both sides' stakes are locked before the bet goes live
+- **Voting-based settlement** — creator marks the event done, all participants vote on the winner; unanimous vote releases funds
+- **Dispute handling** — if votes don't agree, the bet is flagged for review
+- **Early exit** — any participant can request to cancel a live bet; if all agree, stakes are refunded immediately
+- **Automatic expiry refunds** — if a bet expires before everyone has accepted or before it is settled, all locked stakes are returned automatically (hourly cron)
+- **Interswitch payments** — fund your wallet via hosted checkout or virtual bank account (Wema Bank); withdraw winnings to any Nigerian bank account
+- **Platform fee** — a small percentage is deducted from winnings on settlement
 
 ---
 
@@ -45,7 +48,8 @@ Boardman is a peer-to-peer betting escrow platform that lets two parties create,
 | Frontend | Next.js (React), deployed on Vercel |
 | Backend | NestJS, deployed on Render |
 | Database | PostgreSQL (Neon) |
-| Payments | Interswitch API |
+| Payments | Interswitch API (deposits + withdrawals) |
+| Email | Brevo (transactional emails) |
 
 ---
 
@@ -56,17 +60,17 @@ boardman/
 ├── apps/
 │   ├── web/          # Next.js frontend
 │   └── api/          # NestJS backend
-├── packages/         # Shared types, utilities
+├── packages/         # Shared types and utilities
 └── README.md
 ```
 
-> This is a monorepo. Both the frontend and backend live in this repository.
+> This is a pnpm monorepo. Both the frontend and backend live in this repository.
 
 ---
 
 ## Accessing the App
 
-No local setup needed. The app is fully deployed and accessible at **https://boardman.live**.
+No local setup needed. The app is fully deployed at **[boardman.live](https://boardman.live)**.
 
 Use the test credentials above to explore the full bet lifecycle.
 
@@ -75,20 +79,40 @@ Use the test credentials above to explore the full bet lifecycle.
 ## How a Bet Works
 
 ```
-Creator sets terms + stakes funds
+Creator sets terms, stake, and invites participants by username
         ↓
-Bet enters open pool (timer starts)
+Invite emails sent — participants can accept from email or in-app
         ↓
-  ┌─────┴─────┐
-Joined     Timer expires
-  ↓              ↓
-Both sides    Funds refunded
-locked in     to creator
+  ┌─────┴──────────────────┐
+All accept                 Anyone declines / bet expires
+  ↓                              ↓
+Bet goes ACTIVE         All stakes refunded to participants
   ↓
-Outcome reported
-  ↓
-Winner collects escrowed funds
+Creator marks event as done
+        ↓
+All participants vote on the winner
+        ↓
+  ┌─────┴──────────────────┐
+Unanimous vote            Votes disagree
+  ↓                              ↓
+Winner receives          Bet flagged as DISPUTED
+escrowed funds           (minus platform fee)
 ```
+
+> At any point while a bet is ACTIVE, all participants can mutually agree to exit early — stakes are refunded immediately.
+
+---
+
+## Bet Lifecycle States
+
+| Status | Meaning |
+|--------|---------|
+| `PENDING` | Created, waiting for all invited participants to accept |
+| `ACTIVE` | All participants accepted; event is in progress |
+| `VOTING` | Creator marked the event done; participants are voting |
+| `SETTLED` | Unanimous vote reached; winner paid out |
+| `DISPUTED` | Votes disagreed; under review |
+| `REFUNDED` | Bet cancelled or expired; all stakes returned |
 
 ---
 
@@ -106,7 +130,7 @@ Winner collects escrowed funds
 Enyata x Interswitch Developer Community Buildathon, 2025.
 This project was built entirely within the buildathon period and has not been previously developed, submitted, or published.
 
-> **Note on repository creation date:** This repository was created during an initial registration attempt that was not completed. As a result, the repo creation date may not match the final registration date -- however, no code was pushed before the buildathon commenced. The full commit history reflects development that took place entirely within the buildathon window.
+> **Note on repository creation date:** This repository was created during an initial registration attempt that was not completed. As a result, the repo creation date may not match the final registration date — however, no code was pushed before the buildathon commenced. The full commit history reflects development that took place entirely within the buildathon window.
 
 ---
 
