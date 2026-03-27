@@ -131,11 +131,11 @@ export class WalletController {
     @Request() req: ExpressRequest & { user: User },
     @Body() body: TestFundDto,
   ) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new ForbiddenException(
-        'Test funding is not available in production',
-      );
-    }
+    // if (process.env.NODE_ENV === 'production') {
+    //   throw new ForbiddenException(
+    //     'Test funding is not available in production',
+    //   );
+    // }
 
     const userId = req.user.id;
 
