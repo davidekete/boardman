@@ -11,18 +11,21 @@ async function bootstrap() {
   app.use(cookieParser());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
 
-  const allowedOrigins = [
-    process.env.FRONTEND_URL || 'http://localhost:3000',
+  const allowedOrigins = new Set([
     'http://localhost:3000',
     'http://localhost:3001',
-  ].filter(Boolean);
+    'https://boardman.live',
+    'https://www.boardman.live',
+    ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+  ]);
 
   app.enableCors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Allow server-to-server requests (no origin) and listed origins
+      if (!origin || allowedOrigins.has(origin)) {
         callback(null, true);
       } else {
-        callback(new Error('Not allowed by CORS'));
+        callback(new Error(`CORS: origin ${origin} not allowed`));
       }
     },
     credentials: true,
