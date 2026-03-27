@@ -1,60 +1,49 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
-import { TransactionStatus, TransactionType } from '@prisma/client';
+import { TransactionType } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { InterswitchService } from '../payments/interswitch.service';
 import { WalletController } from './wallet.controller';
 import { WalletService } from './wallet.service';
 
-const FRONTEND_URL = 'https://myapp.com';
-
 const mockUser = {
   id: 'user-1',
+  firstName: 'John',
+  lastName: 'Doe',
   email: 'user@example.com',
 };
 
 const makeReq = (user = mockUser) => ({ user } as any);
 
-const makeTx = (overrides = {}) => ({
-  id: 'tx-1',
-  userId: 'user-1',
-  type: TransactionType.DEPOSIT,
-  status: TransactionStatus.PENDING,
-  amount: 500,
-  reference: 'REF001',
-  betId: null,
-  createdAt: new Date(),
-  ...overrides,
-});
-
-const makeRes = () => ({ redirect: jest.fn() } as any);
+const virtualAccount = {
+  accountNumber: '7120241111',
+  bankName: 'Wema Bank',
+  bankCode: 'WEMA',
+};
 
 describe('WalletController', () => {
   let controller: WalletController;
   let walletService: {
     getWallet: jest.Mock;
-    createPendingDeposit: jest.Mock;
-    getPendingDeposit: jest.Mock;
-    settleDeposit: jest.Mock;
-    failDeposit: jest.Mock;
+    getVirtualAccount: jest.Mock;
+    saveVirtualAccount: jest.Mock;
+    getUserByVirtualAccount: jest.Mock;
+    creditWallet: jest.Mock;
   };
   let interswitchService: {
-    initiatePayment: jest.Mock;
-    verifyPayment: jest.Mock;
+    createVirtualAccount: jest.Mock;
   };
 
   beforeEach(async () => {
     walletService = {
       getWallet: jest.fn(),
-      createPendingDeposit: jest.fn(),
-      getPendingDeposit: jest.fn(),
-      settleDeposit: jest.fn(),
-      failDeposit: jest.fn(),
+      getVirtualAccount: jest.fn(),
+      saveVirtualAccount: jest.fn(),
+      getUserByVirtualAccount: jest.fn(),
+      creditWallet: jest.fn(),
     };
 
     interswitchService = {
-      initiatePayment: jest.fn(),
-      verifyPayment: jest.fn(),
+      createVirtualAccount: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -62,10 +51,6 @@ describe('WalletController', () => {
       providers: [
         { provide: WalletService, useValue: walletService },
         { provide: InterswitchService, useValue: interswitchService },
-        {
-          provide: ConfigService,
-          useValue: { get: jest.fn((key: string) => key === 'FRONTEND_URL' ? FRONTEND_URL : undefined) },
-        },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -77,94 +62,122 @@ describe('WalletController', () => {
 
   afterEach(() => jest.clearAllMocks());
 
-  // ─── getWallet ────────────────────────────────────────────────────────────────
+  // ─── getWallet ────────────────────────────────────────────────────────────
 
   describe('getWallet', () => {
-    it('returns the wallet for the authenticated user', () => {
+    it('returns the wallet for the authenticated user', async () => {
       const wallet = { balance: 1000, transactions: [] };
       walletService.getWallet.mockResolvedValue(wallet);
 
-      const result = controller.getWallet(makeReq());
+      const result = await controller.getWallet(makeReq());
 
       expect(walletService.getWallet).toHaveBeenCalledWith('user-1');
-      expect(result).resolves.toEqual(wallet);
+      expect(result).toEqual(wallet);
     });
   });
 
-  // ─── initiateFunding ──────────────────────────────────────────────────────────
+  // ─── initiateFunding ──────────────────────────────────────────────────────
 
   describe('initiateFunding', () => {
-    it('converts amount to kobo, initiates payment, creates pending deposit, and returns url + reference', async () => {
-      interswitchService.initiatePayment.mockResolvedValue({ paymentUrl: 'https://pay.url', reference: 'REF001' });
-      walletService.createPendingDeposit.mockResolvedValue(makeTx());
+    it('returns the cached virtual account without calling Interswitch when one exists', async () => {
+      walletService.getVirtualAccount.mockResolvedValue(virtualAccount);
 
-      const result = await controller.initiateFunding({ amount: 500 }, makeReq());
+      const result = await controller.initiateFunding(makeReq());
 
-      expect(interswitchService.initiatePayment).toHaveBeenCalledWith({
-        amount: 50000, // 500 * 100
-        email: mockUser.email,
-        userId: mockUser.id,
-      });
-      expect(walletService.createPendingDeposit).toHaveBeenCalledWith({
-        userId: mockUser.id,
-        amount: 500, // original Naira amount
-        reference: 'REF001',
-      });
-      expect(result).toEqual({ paymentUrl: 'https://pay.url', reference: 'REF001' });
+      expect(walletService.getVirtualAccount).toHaveBeenCalledWith('user-1');
+      expect(interswitchService.createVirtualAccount).not.toHaveBeenCalled();
+      expect(walletService.saveVirtualAccount).not.toHaveBeenCalled();
+      expect(result).toEqual(virtualAccount);
+    });
+
+    it('creates, saves, and returns a new virtual account when none exists', async () => {
+      walletService.getVirtualAccount.mockResolvedValue(null);
+      interswitchService.createVirtualAccount.mockResolvedValue(virtualAccount);
+      walletService.saveVirtualAccount.mockResolvedValue(undefined);
+
+      const result = await controller.initiateFunding(makeReq());
+
+      expect(interswitchService.createVirtualAccount).toHaveBeenCalledWith(
+        'John Doe',
+      );
+      expect(walletService.saveVirtualAccount).toHaveBeenCalledWith(
+        'user-1',
+        virtualAccount,
+      );
+      expect(result).toEqual(virtualAccount);
     });
   });
 
-  // ─── verifyFunding ────────────────────────────────────────────────────────────
+  // ─── handleWebhook ────────────────────────────────────────────────────────
 
-  describe('verifyFunding', () => {
-    it('redirects to error=invalid_reference when no pending or existing transaction is found', async () => {
-      walletService.getPendingDeposit.mockResolvedValue(null);
-      walletService.settleDeposit.mockResolvedValue(null);
-      const res = makeRes();
+  describe('handleWebhook', () => {
+    const validWebhook = {
+      event: 'TRANSACTION.COMPLETED',
+      uuid: 'uuid-001',
+      data: {
+        retrievalReferenceNumber: '7120241111',
+        amount: 50000, // 500 Naira in kobo
+        responseCode: '00',
+      },
+    };
 
-      await controller.verifyFunding('UNKNOWN', res);
+    it('credits wallet with amount in Naira when webhook is valid', async () => {
+      walletService.getUserByVirtualAccount.mockResolvedValue({ id: 'user-1' });
+      walletService.creditWallet.mockResolvedValue({});
 
-      expect(res.redirect).toHaveBeenCalledWith(`${FRONTEND_URL}/wallet?error=invalid_reference`);
-      expect(interswitchService.verifyPayment).not.toHaveBeenCalled();
+      const result = await controller.handleWebhook(validWebhook);
+
+      expect(walletService.getUserByVirtualAccount).toHaveBeenCalledWith(
+        '7120241111',
+      );
+      expect(walletService.creditWallet).toHaveBeenCalledWith('user-1', 500, {
+        type: TransactionType.DEPOSIT,
+        reference: 'uuid-001',
+      });
+      expect(result).toEqual({ received: true });
     });
 
-    it('redirects to funded=true when no pending but transaction was already settled', async () => {
-      walletService.getPendingDeposit.mockResolvedValue(null);
-      walletService.settleDeposit.mockResolvedValue({ alreadySettled: true, userId: 'user-1', amount: 500 });
-      const res = makeRes();
+    it('returns received without crediting when event is not TRANSACTION.COMPLETED', async () => {
+      const result = await controller.handleWebhook({
+        event: 'OTHER.EVENT',
+        uuid: 'uuid-002',
+        data: {},
+      });
 
-      await controller.verifyFunding('REF001', res);
-
-      expect(res.redirect).toHaveBeenCalledWith(`${FRONTEND_URL}/wallet?funded=true`);
-      expect(interswitchService.verifyPayment).not.toHaveBeenCalled();
+      expect(walletService.getUserByVirtualAccount).not.toHaveBeenCalled();
+      expect(walletService.creditWallet).not.toHaveBeenCalled();
+      expect(result).toEqual({ received: true });
     });
 
-    it('fails the deposit and redirects to error=payment_failed when Interswitch verification fails', async () => {
-      const pending = makeTx({ amount: 500 });
-      walletService.getPendingDeposit.mockResolvedValue(pending);
-      interswitchService.verifyPayment.mockResolvedValue({ success: false });
-      walletService.failDeposit.mockResolvedValue(undefined);
-      const res = makeRes();
+    it('returns received without crediting when responseCode is not "00"', async () => {
+      const result = await controller.handleWebhook({
+        ...validWebhook,
+        data: { ...validWebhook.data, responseCode: '09' },
+      });
 
-      await controller.verifyFunding('REF001', res);
-
-      expect(interswitchService.verifyPayment).toHaveBeenCalledWith('REF001', 50000); // 500 * 100
-      expect(walletService.failDeposit).toHaveBeenCalledWith('REF001');
-      expect(res.redirect).toHaveBeenCalledWith(`${FRONTEND_URL}/wallet?error=payment_failed`);
+      expect(walletService.creditWallet).not.toHaveBeenCalled();
+      expect(result).toEqual({ received: true });
     });
 
-    it('settles the deposit and redirects to funded=true when Interswitch verification succeeds', async () => {
-      const pending = makeTx({ amount: 500 });
-      walletService.getPendingDeposit.mockResolvedValue(pending);
-      interswitchService.verifyPayment.mockResolvedValue({ success: true, amount: 50000 });
-      walletService.settleDeposit.mockResolvedValue({ alreadySettled: false, userId: 'user-1', amount: 500 });
-      const res = makeRes();
+    it('returns received without crediting when virtual account is unknown', async () => {
+      walletService.getUserByVirtualAccount.mockResolvedValue(null);
 
-      await controller.verifyFunding('REF001', res);
+      const result = await controller.handleWebhook(validWebhook);
 
-      expect(walletService.settleDeposit).toHaveBeenCalledWith('REF001');
-      expect(walletService.failDeposit).not.toHaveBeenCalled();
-      expect(res.redirect).toHaveBeenCalledWith(`${FRONTEND_URL}/wallet?funded=true`);
+      expect(walletService.creditWallet).not.toHaveBeenCalled();
+      expect(result).toEqual({ received: true });
+    });
+
+    it('ignores a duplicate webhook (P2002) and returns received', async () => {
+      walletService.getUserByVirtualAccount.mockResolvedValue({ id: 'user-1' });
+      const dupError = Object.assign(new Error('Unique constraint'), {
+        code: 'P2002',
+      });
+      walletService.creditWallet.mockRejectedValue(dupError);
+
+      const result = await controller.handleWebhook(validWebhook);
+
+      expect(result).toEqual({ received: true });
     });
   });
 });

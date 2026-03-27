@@ -41,19 +41,49 @@ export class WalletService {
     };
   }
 
-  async createPendingDeposit(params: {
-    userId: string;
-    amount: number;
-    reference: string;
-  }) {
-    return this.prisma.transaction.create({
-      data: {
-        userId: params.userId,
-        type: TransactionType.DEPOSIT,
-        status: TransactionStatus.PENDING,
-        amount: params.amount,
-        reference: params.reference,
+  async getVirtualAccount(userId: string): Promise<{
+    accountNumber: string;
+    bankName: string;
+    bankCode: string;
+  } | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        virtualAccountNumber: true,
+        virtualAccountBank: true,
+        virtualAccountBankCode: true,
       },
+    });
+
+    if (!user?.virtualAccountNumber) return null;
+
+    return {
+      accountNumber: user.virtualAccountNumber,
+      bankName: user.virtualAccountBank,
+      bankCode: user.virtualAccountBankCode,
+    };
+  }
+
+  async saveVirtualAccount(
+    userId: string,
+    account: { accountNumber: string; bankName: string; bankCode: string },
+  ) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        virtualAccountNumber: account.accountNumber,
+        virtualAccountBank: account.bankName,
+        virtualAccountBankCode: account.bankCode,
+      },
+    });
+  }
+
+  async getUserByVirtualAccount(
+    accountNumber: string,
+  ): Promise<{ id: string } | null> {
+    return this.prisma.user.findUnique({
+      where: { virtualAccountNumber: accountNumber },
+      select: { id: true },
     });
   }
 
@@ -83,55 +113,5 @@ export class WalletService {
       }),
     ]);
     return transaction;
-  }
-
-  async settleDeposit(reference: string): Promise<{
-    alreadySettled: boolean;
-    userId: string;
-    amount: number;
-  } | null> {
-    const transaction = await this.prisma.transaction.findUnique({
-      where: { reference },
-    });
-
-    if (!transaction) return null;
-
-    if (transaction.status === TransactionStatus.SUCCESS) {
-      return {
-        alreadySettled: true,
-        userId: transaction.userId,
-        amount: transaction.amount,
-      };
-    }
-
-    await this.prisma.$transaction([
-      this.prisma.transaction.update({
-        where: { reference },
-        data: { status: TransactionStatus.SUCCESS },
-      }),
-      this.prisma.user.update({
-        where: { id: transaction.userId },
-        data: { walletBalance: { increment: transaction.amount } },
-      }),
-    ]);
-
-    return {
-      alreadySettled: false,
-      userId: transaction.userId,
-      amount: transaction.amount,
-    };
-  }
-
-  async getPendingDeposit(reference: string) {
-    return this.prisma.transaction.findFirst({
-      where: { reference, status: TransactionStatus.PENDING },
-    });
-  }
-
-  async failDeposit(reference: string) {
-    await this.prisma.transaction.updateMany({
-      where: { reference, status: TransactionStatus.PENDING },
-      data: { status: TransactionStatus.FAILED },
-    });
   }
 }

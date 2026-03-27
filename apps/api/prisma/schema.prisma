@@ -20,6 +20,9 @@ model User {
   emailVerified            Boolean   @default(false)
   verificationToken        String?   @unique
   verificationTokenExpiresAt DateTime?
+  virtualAccountNumber   String?   @unique
+  virtualAccountBank     String?
+  virtualAccountBankCode String?
   createdAt                DateTime  @default(now())
 
   betsCreated    Bet[]            @relation("creator")

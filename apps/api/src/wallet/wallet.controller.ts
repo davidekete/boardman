@@ -2,33 +2,26 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   Post,
-  Query,
   Request,
-  Res,
   UseGuards,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import {
-  ApiCookieAuth,
-  ApiOperation,
-  ApiQuery,
-  ApiTags,
-} from '@nestjs/swagger';
-import { User } from '@prisma/client';
-import { Request as ExpressRequest, Response } from 'express';
+import { ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { TransactionType, User } from '@prisma/client';
+import { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { InterswitchService } from '../payments/interswitch.service';
-import { FundWalletDto } from './dto/fund-wallet.dto';
 import { WalletService } from './wallet.service';
 
 @ApiTags('Wallet')
 @Controller('wallet')
 export class WalletController {
+  private readonly logger = new Logger(WalletController.name);
+
   constructor(
     private readonly walletService: WalletService,
     private readonly interswitchService: InterswitchService,
-    private readonly config: ConfigService,
   ) {}
 
   @Get()
@@ -43,63 +36,81 @@ export class WalletController {
   @UseGuards(JwtAuthGuard)
   @ApiCookieAuth('boardman_token')
   @ApiOperation({
-    summary: 'Initiate a wallet top-up via Interswitch Pay Bill',
+    summary: 'Get or create a permanent virtual bank account for wallet top-up',
   })
-  async initiateFunding(
-    @Body() dto: FundWalletDto,
-    @Request() req: ExpressRequest & { user: User },
-  ) {
-    const userId: string = req.user.id;
-    const amountInKobo = dto.amount * 100;
+  async initiateFunding(@Request() req: ExpressRequest & { user: User }) {
+    const userId = req.user.id;
 
-    const { paymentUrl, reference } =
-      await this.interswitchService.initiatePayment({
-        amount: amountInKobo,
-        email: req.user.email,
-        userId,
-      });
-
-    await this.walletService.createPendingDeposit({
-      userId,
-      amount: dto.amount,
-      reference,
-    });
-
-    return { paymentUrl, reference };
-  }
-
-  @Get('fund/verify')
-  @ApiOperation({
-    summary:
-      'Interswitch redirect callback — verifies payment and credits wallet',
-  })
-  @ApiQuery({ name: 'txnref', description: 'Merchant transaction reference' })
-  async verifyFunding(@Query('txnref') txnref: string, @Res() res: Response) {
-    const frontendUrl = this.config.get<string>('FRONTEND_URL');
-
-    const pending = await this.walletService.getPendingDeposit(txnref);
-
-    if (!pending) {
-      // Already settled or never existed — check for idempotency via settleDeposit
-      const settlement = await this.walletService.settleDeposit(txnref);
-      if (!settlement) {
-        return res.redirect(`${frontendUrl}/wallet?error=invalid_reference`);
-      }
-      return res.redirect(`${frontendUrl}/wallet?funded=true`);
+    const existing = await this.walletService.getVirtualAccount(userId);
+    if (existing) {
+      this.logger.log(`Returning existing virtual account for user ${userId}`);
+      return existing;
     }
 
-    const amountInKobo = pending.amount * 100;
-    const result = await this.interswitchService.verifyPayment(
-      txnref,
-      amountInKobo,
+    const accountName = `${req.user.firstName} ${req.user.lastName}`;
+    const account = await this.interswitchService.createVirtualAccount(
+      accountName,
     );
 
-    if (!result.success) {
-      await this.walletService.failDeposit(txnref);
-      return res.redirect(`${frontendUrl}/wallet?error=payment_failed`);
+    await this.walletService.saveVirtualAccount(userId, account);
+
+    this.logger.log(
+      `Virtual account created for user ${userId}: ${account.accountNumber}`,
+    );
+
+    return account;
+  }
+
+  @Post('fund/webhook')
+  @ApiOperation({
+    summary: 'Interswitch TRANSACTION.COMPLETED webhook for virtual accounts',
+  })
+  async handleWebhook(@Body() body: Record<string, any>) {
+    const { event, uuid, data } = body;
+
+    if (event !== 'TRANSACTION.COMPLETED') {
+      this.logger.debug(`Ignoring webhook event: ${event}`);
+      return { received: true };
     }
 
-    await this.walletService.settleDeposit(txnref);
-    return res.redirect(`${frontendUrl}/wallet?funded=true`);
+    const { retrievalReferenceNumber, amount, responseCode } = data ?? {};
+
+    if (responseCode !== '00') {
+      this.logger.warn(
+        `Webhook received with non-success responseCode: ${responseCode}`,
+      );
+      return { received: true };
+    }
+
+    const user = await this.walletService.getUserByVirtualAccount(
+      retrievalReferenceNumber,
+    );
+    if (!user) {
+      this.logger.warn(
+        `Webhook received for unknown virtual account: ${retrievalReferenceNumber}`,
+      );
+      return { received: true };
+    }
+
+    // Amount is in kobo — convert to Naira before crediting
+    const amountInNaira = amount / 100;
+
+    try {
+      await this.walletService.creditWallet(user.id, amountInNaira, {
+        type: TransactionType.DEPOSIT,
+        reference: uuid, // Unique constraint on Transaction.reference handles idempotency
+      });
+      this.logger.log(
+        `Wallet credited — userId: ${user.id}, amount: ${amountInNaira}, uuid: ${uuid}`,
+      );
+    } catch (err) {
+      if ((err as any)?.code === 'P2002') {
+        this.logger.warn(`Duplicate webhook ignored — uuid: ${uuid}`);
+        return { received: true };
+      }
+      this.logger.error(`Webhook wallet credit failed — uuid: ${uuid}`, err);
+    }
+
+    return { received: true };
   }
 }

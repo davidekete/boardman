@@ -1,0 +1,842 @@
+openapi: 3.0.3
+info:
+  title: Boardman API
+  description: P2P bet escrow platform API
+  version: '1.0'
+
+servers:
+  - url: http://localhost:3002
+    description: Local development
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: boardman_token
+
+  schemas:
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    RegisterDto:
+      type: object
+      required: [firstName, lastName, username, email, password]
+      properties:
+        firstName:
+          type: string
+          minLength: 2
+          example: John
+        lastName:
+          type: string
+          minLength: 2
+          example: Doe
+        username:
+          type: string
+          minLength: 3
+          pattern: '^[a-zA-Z0-9_]+$'
+          example: johndoe
+        email:
+          type: string
+          format: email
+          example: john@example.com
+        password:
+          type: string
+          minLength: 8
+          example: password123
+
+    LoginDto:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: john@example.com
+        password:
+          type: string
+          example: password123
+
+    CompleteProfileDto:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          pattern: '^[a-zA-Z0-9_]+$'
+          example: johndoe
+
+    SafeUser:
+      type: object
+      properties:
+        id:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        username:
+          type: string
+          nullable: true
+        email:
+          type: string
+        avatar:
+          type: string
+          nullable: true
+        walletBalance:
+          type: number
+        emailVerified:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    # ── Wallet ────────────────────────────────────────────────────────────────
+    FundWalletDto:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: number
+          minimum: 100
+          description: Amount in Naira (min 100)
+          example: 500
+
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        type:
+          type: string
+          enum: [DEPOSIT, WITHDRAWAL, ESCROW_LOCK, ESCROW_RELEASE, REFUND, FEE]
+        amount:
+          type: number
+        betId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    WalletResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        walletBalance:
+          type: number
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transaction'
+
+    FundInitiateResponse:
+      type: object
+      properties:
+        paymentUrl:
+          type: string
+          example: 'https://pay.interswitch.com/pay'
+        reference:
+          type: string
+          example: REF123
+
+    # ── Bets ──────────────────────────────────────────────────────────────────
+    CreateBetDto:
+      type: object
+      required: [title, stakeAmount, participantUsernames, expiresInHours]
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 100
+          example: Who scores first?
+        terms:
+          type: string
+          example: First goal scorer in the match
+        stakeAmount:
+          type: number
+          minimum: 100
+          description: Stake amount in Naira (min 100)
+          example: 500
+        participantUsernames:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 9
+          example: ['alice', 'bob']
+        expiresInHours:
+          type: number
+          enum: [24, 72, 168]
+          description: Bet duration in hours (24, 72, or 168)
+          example: 24
+
+    VoteDto:
+      type: object
+      required: [winnerId]
+      properties:
+        winnerId:
+          type: string
+          description: User ID of the voted winner
+          example: clxyz123
+
+    ParticipantResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        username:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        accepted:
+          type: boolean
+          nullable: true
+        outcomeVote:
+          type: string
+          nullable: true
+        votedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    BetResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        terms:
+          type: string
+        stakeAmount:
+          type: number
+        escrowAmount:
+          type: number
+        status:
+          type: string
+          enum: [PENDING, ACTIVE, VOTING, CONSENSUS, SETTLED, DISPUTED, REFUNDED]
+          description: BetStatus enum value
+        creatorId:
+          type: string
+        winnerId:
+          type: string
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        settledAt:
+          type: string
+          format: date-time
+          nullable: true
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParticipantResponse'
+
+    # ── Errors ────────────────────────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        message:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        error:
+          type: string
+
+paths:
+  # ════════════════════════════════════════════════════════════════════════════
+  # Auth
+  # ════════════════════════════════════════════════════════════════════════════
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDto'
+      responses:
+        '201':
+          description: User registered and auth cookie set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeUser'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email or username already in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginDto'
+      responses:
+        '200':
+          description: Authenticated — auth cookie set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeUser'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Clear auth cookie and log out
+      responses:
+        '200':
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Logged out
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the authenticated user
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeUser'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/google:
+    get:
+      tags: [Auth]
+      summary: Redirect to Google OAuth
+      responses:
+        '302':
+          description: Redirect to Google consent screen
+
+  /auth/google/callback:
+    get:
+      tags: [Auth]
+      summary: Google OAuth callback
+      responses:
+        '302':
+          description: Redirect to frontend (with auth cookie set)
+
+  /auth/verify-email:
+    get:
+      tags: [Auth]
+      summary: Verify email address via token link
+      parameters:
+        - name: token
+          in: query
+          required: true
+          description: Email verification token
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to frontend (success or error)
+
+  /auth/complete-profile:
+    post:
+      tags: [Auth]
+      summary: Set username after Google OAuth sign-up
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteProfileDto'
+      responses:
+        '201':
+          description: Profile completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeUser'
+        '400':
+          description: Username taken or invalid format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Users
+  # ════════════════════════════════════════════════════════════════════════════
+
+  /users/search:
+    get:
+      tags: [Users]
+      summary: Search users by username (min 2 chars, max 5 results)
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: username
+          in: query
+          required: true
+          description: Partial username to search for (min 2 characters)
+          schema:
+            type: string
+            minLength: 2
+      responses:
+        '200':
+          description: Matching users (excludes the requester)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    username:
+                      type: string
+                    firstName:
+                      type: string
+                    lastName:
+                      type: string
+                    avatar:
+                      type: string
+                      nullable: true
+        '400':
+          description: Query too short (< 2 characters)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/{username}:
+    get:
+      tags: [Users]
+      summary: Get a user by exact username
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: username
+          in: path
+          required: true
+          description: Exact username to look up
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafeUser'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Wallet
+  # ════════════════════════════════════════════════════════════════════════════
+
+  /wallet:
+    get:
+      tags: [Wallet]
+      summary: Get wallet balance and last 50 transactions
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Wallet data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /wallet/fund/initiate:
+    post:
+      tags: [Wallet]
+      summary: Initiate a wallet top-up via Interswitch Pay Bill
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FundWalletDto'
+      responses:
+        '201':
+          description: Payment initiated — redirect user to paymentUrl
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FundInitiateResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Interswitch gateway error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /wallet/fund/verify:
+    get:
+      tags: [Wallet]
+      summary: Interswitch redirect callback — verifies payment and credits wallet
+      description: >
+        This endpoint is called by Interswitch after payment. It verifies the
+        transaction, credits the wallet if successful, and redirects the user
+        to the frontend. Not intended to be called directly by the client.
+      parameters:
+        - name: txnref
+          in: query
+          required: true
+          description: Merchant transaction reference returned by Interswitch
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to frontend with `?funded=true` or `?error=payment_failed` / `?error=invalid_reference`
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Bets
+  # ════════════════════════════════════════════════════════════════════════════
+
+  /bets:
+    post:
+      tags: [Bets]
+      summary: Create a new bet and lock the creator's stake
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBetDto'
+      responses:
+        '201':
+          description: Bet created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetResponse'
+        '400':
+          description: Invalid participants or insufficient balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags: [Bets]
+      summary: Get all bets the authenticated user is involved in
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: List of bets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BetResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bets/{id}:
+    get:
+      tags: [Bets]
+      summary: Get a single bet by ID
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bet details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: User is not a participant in this bet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Bet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bets/{id}/accept:
+    post:
+      tags: [Bets]
+      summary: Accept a bet invite and lock stake
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Invite accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetResponse'
+        '400':
+          description: Already responded, bet not pending, or insufficient balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Participant record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bets/{id}/decline:
+    post:
+      tags: [Bets]
+      summary: Decline a bet invite and refund all accepted stakes
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Invite declined, stakes refunded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetResponse'
+        '400':
+          description: Already responded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Participant record not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bets/{id}/open-voting:
+    post:
+      tags: [Bets]
+      summary: Open the voting phase (creator only)
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Voting opened
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetResponse'
+        '400':
+          description: Bet is not active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Only the creator can open voting
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Bet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bets/{id}/vote:
+    post:
+      tags: [Bets]
+      summary: Submit an outcome vote
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoteDto'
+      responses:
+        '201':
+          description: Vote recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BetResponse'
+        '400':
+          description: Voting not open, already voted, or invalid winner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: User is not a participant in this bet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

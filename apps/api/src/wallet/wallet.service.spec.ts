@@ -5,20 +5,22 @@ import { WalletService } from './wallet.service';
 
 const userId = 'user-1';
 
-const makeTx = (overrides: Partial<{
-  id: string;
-  userId: string;
-  type: TransactionType;
-  status: TransactionStatus;
-  amount: number;
-  reference: string | null;
-  betId: string | null;
-  createdAt: Date;
-}> = {}) => ({
+const makeTx = (
+  overrides: Partial<{
+    id: string;
+    userId: string;
+    type: TransactionType;
+    status: TransactionStatus;
+    amount: number;
+    reference: string | null;
+    betId: string | null;
+    createdAt: Date;
+  }> = {},
+) => ({
   id: 'tx-1',
   userId,
   type: TransactionType.DEPOSIT,
-  status: TransactionStatus.PENDING,
+  status: TransactionStatus.SUCCESS,
   amount: 500,
   reference: 'REF001',
   betId: null,
@@ -30,28 +32,14 @@ describe('WalletService', () => {
   let service: WalletService;
   let prisma: {
     user: { findUnique: jest.Mock; update: jest.Mock };
-    transaction: {
-      findMany: jest.Mock;
-      create: jest.Mock;
-      findUnique: jest.Mock;
-      findFirst: jest.Mock;
-      update: jest.Mock;
-      updateMany: jest.Mock;
-    };
+    transaction: { findMany: jest.Mock; create: jest.Mock };
     $transaction: jest.Mock;
   };
 
   beforeEach(async () => {
     prisma = {
       user: { findUnique: jest.fn(), update: jest.fn() },
-      transaction: {
-        findMany: jest.fn(),
-        create: jest.fn(),
-        findUnique: jest.fn(),
-        findFirst: jest.fn(),
-        update: jest.fn(),
-        updateMany: jest.fn(),
-      },
+      transaction: { findMany: jest.fn(), create: jest.fn() },
       $transaction: jest.fn(),
     };
 
@@ -67,13 +55,13 @@ describe('WalletService', () => {
 
   afterEach(() => jest.clearAllMocks());
 
-  // ─── getWallet ────────────────────────────────────────────────────────────────
+  // ─── getWallet ────────────────────────────────────────────────────────────
 
   describe('getWallet', () => {
     it('returns balance and last 50 transactions with human-readable descriptions', async () => {
       prisma.user.findUnique.mockResolvedValue({ walletBalance: 1000 });
       prisma.transaction.findMany.mockResolvedValue([
-        makeTx({ type: TransactionType.DEPOSIT, status: TransactionStatus.SUCCESS }),
+        makeTx({ type: TransactionType.DEPOSIT }),
         makeTx({ id: 'tx-2', type: TransactionType.ESCROW_LOCK }),
       ]);
 
@@ -85,7 +73,7 @@ describe('WalletService', () => {
     });
 
     it('shapes each transaction to the expected fields', async () => {
-      const tx = makeTx({ status: TransactionStatus.SUCCESS });
+      const tx = makeTx();
       prisma.user.findUnique.mockResolvedValue({ walletBalance: 500 });
       prisma.transaction.findMany.mockResolvedValue([tx]);
 
@@ -116,29 +104,86 @@ describe('WalletService', () => {
     });
   });
 
-  // ─── createPendingDeposit ─────────────────────────────────────────────────────
+  // ─── getVirtualAccount ────────────────────────────────────────────────────
 
-  describe('createPendingDeposit', () => {
-    it('creates a PENDING DEPOSIT transaction with the given params', async () => {
-      const tx = makeTx();
-      prisma.transaction.create.mockResolvedValue(tx);
-
-      const result = await service.createPendingDeposit({ userId, amount: 500, reference: 'REF001' });
-
-      expect(prisma.transaction.create).toHaveBeenCalledWith({
-        data: {
-          userId,
-          type: TransactionType.DEPOSIT,
-          status: TransactionStatus.PENDING,
-          amount: 500,
-          reference: 'REF001',
-        },
+  describe('getVirtualAccount', () => {
+    it('returns mapped account details when the user has a virtual account', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        virtualAccountNumber: '7120241111',
+        virtualAccountBank: 'Wema Bank',
+        virtualAccountBankCode: 'WEMA',
       });
-      expect(result).toEqual(tx);
+
+      const result = await service.getVirtualAccount(userId);
+
+      expect(result).toEqual({
+        accountNumber: '7120241111',
+        bankName: 'Wema Bank',
+        bankCode: 'WEMA',
+      });
+    });
+
+    it('returns null when the user has no virtual account', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        virtualAccountNumber: null,
+        virtualAccountBank: null,
+        virtualAccountBankCode: null,
+      });
+
+      const result = await service.getVirtualAccount(userId);
+
+      expect(result).toBeNull();
     });
   });
 
-  // ─── creditWallet ─────────────────────────────────────────────────────────────
+  // ─── saveVirtualAccount ───────────────────────────────────────────────────
+
+  describe('saveVirtualAccount', () => {
+    it('updates the user record with the virtual account fields', async () => {
+      prisma.user.update.mockResolvedValue({});
+
+      await service.saveVirtualAccount(userId, {
+        accountNumber: '7120241111',
+        bankName: 'Wema Bank',
+        bankCode: 'WEMA',
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: userId },
+        data: {
+          virtualAccountNumber: '7120241111',
+          virtualAccountBank: 'Wema Bank',
+          virtualAccountBankCode: 'WEMA',
+        },
+      });
+    });
+  });
+
+  // ─── getUserByVirtualAccount ──────────────────────────────────────────────
+
+  describe('getUserByVirtualAccount', () => {
+    it('returns the user id for a known virtual account number', async () => {
+      prisma.user.findUnique.mockResolvedValue({ id: userId });
+
+      const result = await service.getUserByVirtualAccount('7120241111');
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { virtualAccountNumber: '7120241111' },
+        select: { id: true },
+      });
+      expect(result).toEqual({ id: userId });
+    });
+
+    it('returns null for an unknown virtual account number', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      const result = await service.getUserByVirtualAccount('0000000000');
+
+      expect(result).toBeNull();
+    });
+  });
+
+  // ─── creditWallet ─────────────────────────────────────────────────────────
 
   describe('creditWallet', () => {
     it('runs a prisma transaction that creates a SUCCESS record and increments wallet balance', async () => {
@@ -154,80 +199,6 @@ describe('WalletService', () => {
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(2);
       expect(result).toEqual(tx);
-    });
-  });
-
-  // ─── settleDeposit ────────────────────────────────────────────────────────────
-
-  describe('settleDeposit', () => {
-    it('returns null when the reference does not exist', async () => {
-      prisma.transaction.findUnique.mockResolvedValue(null);
-
-      const result = await service.settleDeposit('UNKNOWN');
-
-      expect(result).toBeNull();
-      expect(prisma.$transaction).not.toHaveBeenCalled();
-    });
-
-    it('returns alreadySettled: true without touching the DB when already SUCCESS', async () => {
-      const tx = makeTx({ status: TransactionStatus.SUCCESS });
-      prisma.transaction.findUnique.mockResolvedValue(tx);
-
-      const result = await service.settleDeposit('REF001');
-
-      expect(result).toEqual({ alreadySettled: true, userId, amount: tx.amount });
-      expect(prisma.$transaction).not.toHaveBeenCalled();
-    });
-
-    it('updates status to SUCCESS and credits the wallet when PENDING, returns alreadySettled: false', async () => {
-      const tx = makeTx({ status: TransactionStatus.PENDING });
-      prisma.transaction.findUnique.mockResolvedValue(tx);
-      prisma.$transaction.mockResolvedValue([{}, {}]);
-
-      const result = await service.settleDeposit('REF001');
-
-      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-      expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(2);
-      expect(result).toEqual({ alreadySettled: false, userId, amount: tx.amount });
-    });
-  });
-
-  // ─── getPendingDeposit ────────────────────────────────────────────────────────
-
-  describe('getPendingDeposit', () => {
-    it('queries for a PENDING transaction by reference', async () => {
-      const tx = makeTx();
-      prisma.transaction.findFirst.mockResolvedValue(tx);
-
-      const result = await service.getPendingDeposit('REF001');
-
-      expect(prisma.transaction.findFirst).toHaveBeenCalledWith({
-        where: { reference: 'REF001', status: TransactionStatus.PENDING },
-      });
-      expect(result).toEqual(tx);
-    });
-
-    it('returns null when no pending transaction exists for the reference', async () => {
-      prisma.transaction.findFirst.mockResolvedValue(null);
-
-      const result = await service.getPendingDeposit('NONE');
-
-      expect(result).toBeNull();
-    });
-  });
-
-  // ─── failDeposit ─────────────────────────────────────────────────────────────
-
-  describe('failDeposit', () => {
-    it('marks all PENDING transactions for the reference as FAILED', async () => {
-      prisma.transaction.updateMany.mockResolvedValue({ count: 1 });
-
-      await service.failDeposit('REF001');
-
-      expect(prisma.transaction.updateMany).toHaveBeenCalledWith({
-        where: { reference: 'REF001', status: TransactionStatus.PENDING },
-        data: { status: TransactionStatus.FAILED },
-      });
     });
   });
 });
